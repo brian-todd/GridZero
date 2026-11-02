@@ -1,0 +1,53 @@
+# A local LLM server for LLM players (`gridzero.agents.llm`).
+#
+#   docker compose up -d          # start it; the first start downloads the model (~4.6 GB)
+#   docker compose logs -f llm    # watch it load
+#   docker compose down           # stop it
+#
+# llama.cpp's llama-server answers OpenAI-style chat requests on http://127.0.0.1:8080, the
+# default of `gridzero.agents.llm.LlamaServer`. Settings come from the environment or a
+# `.env` file beside this one:
+#
+#   LLM_MODEL    a Hugging Face GGUF repository and quantization
+#                (default bartowski/Qwen_Qwen3.5-4B-GGUF:Q8_0, which fits a 10 GB GPU whole)
+#   LLM_CONTEXT  tokens of context (default 16384)
+#   LLM_PORT     the port on 127.0.0.1 (default 8080)
+#   LLM_CACHE    where downloaded models are kept (default ~/.cache/llama.cpp)
+#
+# The image is pinned to a build, so that games replay with the same server. It needs the
+# NVIDIA container toolkit.
+
+services:
+  llm:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda-b11515
+    command: # flags and values apart: llama-server turns "_" into "-" in "--flag=value"
+      - --hf-repo
+      - ${LLM_MODEL:-bartowski/Qwen_Qwen3.5-4B-GGUF:Q8_0}
+      - --ctx-size
+      - ${LLM_CONTEXT:-16384}
+      - --n-gpu-layers # every layer on the GPU
+      - "999"
+      - --parallel # one request at a time, with the whole context
+      - "1"
+      - --jinja # the model's own chat template, which can turn thinking off per request
+      - --no-mmproj # no image input: saves the projector's GPU memory (about 0.9 GB)
+    environment:
+      LLAMA_CACHE: /models
+      LLAMA_ARG_HOST: 0.0.0.0 # inside the container; the port below stays on this machine
+      LLAMA_ARG_PORT: "8080" # explicit: llama.cpp means to change its default port
+    volumes:
+      - ${LLM_CACHE:-~/.cache/llama.cpp}:/models
+    ports:
+      - 127.0.0.1:${LLM_PORT:-8080}:8080 # this machine only: the server has no authentication
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: [CMD, curl, -fs, http://localhost:8080/health]
+      interval: 10s
+      start_period: 10m # the first start downloads the model
+    restart: unless-stopped

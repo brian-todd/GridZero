@@ -1,0 +1,96 @@
+[project]
+name = "gridzero"
+version = "0.1.0"
+description = "Self-play agents, games and simulations on worlds of cells, from flat boards to planets"
+readme = "README.md"
+authors = [
+    { name = "Brian Todd", email = "20519009+brian-todd@users.noreply.github.com" }
+]
+requires-python = ">=3.15"
+dependencies = [
+    "matplotlib>=3.11.2",
+    "numba>=0.68.0",
+    "numpy>=2.5.4",
+    "pandas>=3.0.6",
+    "scikit-learn>=1.9.1",
+    "scipy>=1.18.1",
+    "torch>=2.14.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "jupyterlab>=4.6.5",
+    "pytest>=9.1.1",
+    "ruff>=0.17.1",
+    "ty>=0.0.89",
+]
+
+[tool.ty.environment]
+python-version = "3.15"
+extra-paths = ["tests"]  # tests/demo.py: Fields classes shared by the tests
+
+[tool.ty.src]
+include = ["src", "examples", "run.py", "tests", "benchmarks"]
+
+[tool.ty.terminal]
+error-on-warning = true
+
+[tool.ty.rules]
+# Off by default. They catch vague types and ignores that hide more than they name.
+missing-type-argument = "error"         # a bare `tuple`, `dict` or `Field`
+possibly-unresolved-reference = "error"
+possibly-missing-attribute = "error"
+possibly-missing-import = "error"
+blanket-ignore-comment = "error"        # a `ty: ignore` must name its rules
+
+[tool.ruff]
+line-length = 100
+target-version = "py315"
+src = ["src", ".", "tests"]  # "." for examples/ and benchmarks/
+extend-exclude = ["docs"]  # design-doc snippets are illustrative sketches, not runnable code
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle
+    "F",       # pyflakes
+    "I",       # isort
+    "B",       # bugbear
+    "UP",      # pyupgrade
+    "C4",      # comprehensions
+    "SIM",     # simplify
+    "PERF",    # performance anti-patterns
+    "NPY",     # numpy-specific rules
+    "PT",      # pytest style
+    "D",       # docstrings (numpy convention, below)
+    "D417",    # a Parameters section names every argument (the numpy convention turns it off)
+    "RUF",     # ruff-specific
+    "ANN",     # annotations: every function in src/ is typed
+]
+ignore = [
+    "D105",  # magic methods need no docstring
+    "D107",  # document __init__ parameters in the class docstring (numpy convention)
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.per-file-ignores]
+# Outside src/, ty checks the code against the package's types, but functions need no
+# annotations of their own.
+"tests/**" = ["D", "ANN"]
+"benchmarks/**" = ["D", "ANN"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]  # examples/ and run.py; tests/demo.py: Fields classes shared by the tests
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+markers = ["slow: expensive tests, excluded from the fast loop with -m 'not slow'"]
+filterwarnings = ["error"]
+xfail_strict = true

@@ -1,0 +1,40 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Tool caches (each also ignores itself, but say so here)
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# Editor settings
+.zed/
+
+# Local settings, such as compose.yaml's LLM_* variables: may hold tokens
+.env
+.env.*
+
+# Training runs: network weights and logs (generated, not committed)
+runs/
+*.pt
+
+# Experiments' output, written to the working directory (the repository's root) by default
+/*.png
+/*.gif
+/*.jsonl
+
+# Internal development documents: kept locally, never published
+/docs/
+
+# Local notes for Claude Code on the internal documents
+CLAUDE.local.md
