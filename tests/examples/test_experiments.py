@@ -1,7 +1,9 @@
 """Every experiment that finishes in seconds at its smallest, run once through ``run.py``.
 
-Not run here: ``tactics.watch`` (a GIF of hundreds of frames, a minute), and the training
-experiments ``tactics.zero_scratch``, ``in_a_row.zero_scratch`` and
+Not run here: ``tactics.watch`` (a GIF of hundreds of frames, a minute),
+``in_a_row.code_report`` (a deep search over hundreds of positions, whose parts `test_report`
+runs small), ``in_a_row.play`` (a server, until stopped, whose parts `test_play` starts and plays),
+and the training experiments ``tactics.zero_scratch``, ``in_a_row.zero_scratch`` and
 ``colonies.muzero_scratch`` (the GPU, and half a minute to minutes each).
 `test_run` imports each of them and checks its arguments.
 """
@@ -16,7 +18,13 @@ import run
 from examples.games.colonies import EVAL_SEED, Colonies, Raider
 from examples.games.colonies.experiments import muzero_ladder
 from examples.games.colonies.learned import player
-from examples.games.in_a_row import InARow
+from examples.games.in_a_row import (
+    MOVE_FEATURES,
+    VALUE_FEATURES,
+    FittedEvaluator,
+    InARow,
+    Lessons,
+)
 from examples.games.tactics import Tactics
 from examples.games.voronoi import EVAL_SEED as VORONOI_SEED
 from examples.games.voronoi import Greedy, Voronoi
@@ -172,3 +180,31 @@ def test_zero_check(capsys, weights):
 def test_in_a_row_zero_check(capsys, weights):
     out = ran(capsys, "in_a_row.zero_check", weights["four"], 1, 2)
     assert "agent, 2 simulations against threat" in out
+
+
+def test_in_a_row_code_fit_writes_a_fit_and_lessons_per_round(capsys, tmp_path, weights):
+    prefix = tmp_path / "code"
+    out = ran(capsys, "in_a_row.code_fit", weights["four"], 1, prefix, 2)
+    assert "Round 1: " in out
+    assert "at 64 simulations against threat" in out
+    assert FittedEvaluator.load(f"{prefix}_round1.json")
+    assert len(Lessons.load(f"{prefix}_lessons.npz")) > 0
+
+
+def test_in_a_row_code_ladder(capsys, tmp_path, weights):
+    fit = tmp_path / "fit.json"
+    FittedEvaluator((0.0,) * len(VALUE_FEATURES), 0.0, (0.0,) * len(MOVE_FEATURES)).save(fit)
+    out = ran(capsys, "in_a_row.code_ladder", weights["four"], fit, 1, 2)
+    assert "teacher: after each first column" in out
+    assert "us a simulation at 64 simulations" in out
+    for name in ("search", "lines", "fit", "teacher"):
+        assert f"2 simulations, {name} against uniform" in out
+    assert "against teacher at 2 " in out
+
+
+def test_in_a_row_code_fit_refuses_a_prefix_already_used(capsys, tmp_path, weights):
+    prefix = tmp_path / "code"
+    (tmp_path / "code_round2.json").write_text("{}")  # a round the new run might not reach
+    with pytest.raises(FileExistsError, match="prefix of its own"):
+        ran(capsys, "in_a_row.code_fit", weights["four"], 1, prefix, 1)
+    assert not (tmp_path / "code_lessons.npz").exists()

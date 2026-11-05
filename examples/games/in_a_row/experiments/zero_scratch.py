@@ -12,7 +12,7 @@ games players are scored on (`EVAL_SEED`).
 
 96 simulations a decision end sequential halving evenly for any number of legal actions from 2
 to 7, which mattered before the search chose among the actions a round cut short still
-considered (finding G8, fixed 2026-10-29): agents A and B were trained that way.
+considered (fixed 2026-10-29): agents A and B were trained that way.
 
 Run with ``uv run python run.py in_a_row.zero_scratch minutes [prefix] [starts] [seed]``:
 by default the files in the working directory as ``zero_scratch_*``, 50 starts and seed 0 (a

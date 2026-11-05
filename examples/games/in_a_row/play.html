@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Connect Four Table</title>
+<link rel="icon" href="data:,">
+<style>
+/* STYLE */
+main { max-width:980px; }
+button, select, textarea { font:inherit; color:inherit; }
+button { background:var(--panel); border:1px solid var(--line); border-radius:6px;
+  padding:6px 12px; cursor:pointer; }
+button:hover:not(:disabled) { border-color:var(--soft); }
+button:disabled { cursor:default; opacity:.45; }
+button.primary { background:var(--ink); border-color:var(--ink); color:var(--bg); font-weight:600; }
+:focus-visible { outline:2px solid var(--second); outline-offset:2px; }
+[hidden] { display:none !important; }
+.panel { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+  padding:12px 14px; margin:14px 0; }
+.panel h2 { font-size:16px; margin:0 0 6px; }
+.rungs td:first-child { white-space:nowrap; }
+.rungs label { display:flex; gap:8px; align-items:baseline; cursor:pointer; font-weight:600; }
+.rungs td.about { text-align:left; white-space:normal; min-width:220px; color:var(--soft); }
+.vary { display:flex; gap:8px; align-items:baseline; cursor:pointer; margin:12px 0 0; }
+.vary .small { display:block; }
+.seats { display:flex; flex-wrap:wrap; gap:14px; align-items:center; margin:12px 0; }
+.seats label { display:flex; gap:6px; align-items:baseline; cursor:pointer; }
+.from { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+.playing { display:grid; grid-template-columns:minmax(0,440px) minmax(0,1fr); gap:24px;
+  align-items:start; }
+@media (max-width:760px) { .playing { grid-template-columns:minmax(0,1fr); gap:8px; } }
+.status { font-size:17px; font-weight:600; min-height:1.5em; margin:0 0 8px; max-width:none; }
+.status.error { color:var(--bad); }
+.drops { display:grid; grid-template-columns:repeat(var(--columns),1fr); gap:0; }
+.drops button { padding:4px 0; border-radius:6px 6px 0 0; font-variant-numeric:tabular-nums; }
+.board { width:100%; margin:0; touch-action:manipulation; }
+.board polygon { cursor:default; }
+.board.open polygon { cursor:pointer; }
+circle.ghost { opacity:.3; pointer-events:none; }
+circle.first, circle.second { pointer-events:none; }
+circle.last { fill:none; stroke:var(--ink); stroke-width:3; pointer-events:none; }
+circle.win { fill:none; stroke:var(--good); stroke-width:6; pointer-events:none; }
+@media (prefers-reduced-motion: no-preference) {
+  circle.drop { animation:drop .22s ease-in; }
+  @keyframes drop { from { transform:translateY(var(--fall)); } }
+}
+.moves { display:flex; flex-wrap:wrap; gap:4px; margin:10px 0 0; }
+.moves button { padding:1px 7px; font-size:13px; font-variant-numeric:tabular-nums; }
+.moves button[aria-current="true"] { border-color:var(--ink); box-shadow:inset 0 0 0 1px var(--ink); }
+.dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px; }
+.dot.p0 { background:var(--first); } .dot.p1 { background:var(--second); }
+.actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 0; }
+.searched { width:100%; font-size:13px; }
+.searched td { padding:2px 8px 2px 0; }
+.searched td.barcell { width:60%; text-align:left; }
+.searched .bar { max-width:100%; }
+.searched tr.played td { font-weight:600; }
+.searched tr.played .bar { background:var(--ink); }
+.reasons { list-style:none; margin:4px 0 12px; padding:0; font-size:13px; }
+.reasons li { display:grid; grid-template-columns:3.4em 1fr; gap:6px; padding:3px 0;
+  border-bottom:1px solid var(--line); }
+.reasons .up { color:var(--good); font-weight:600; font-variant-numeric:tabular-nums; }
+.reasons .down { color:var(--bad); font-weight:600; font-variant-numeric:tabular-nums; }
+.panel h3 { font-size:13px; font-weight:600; margin:12px 0 2px; }
+.small { font-size:13px; }
+fieldset { border:0; padding:0; margin:0 0 12px; }
+legend { padding:0; font-weight:600; margin-bottom:4px; }
+.stars { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+.stars label { display:flex; gap:4px; align-items:baseline; cursor:pointer; }
+.toggles { display:flex; flex-wrap:wrap; gap:4px; margin:4px 0 8px; }
+.toggles button { padding:1px 7px; font-size:13px; }
+.toggles button[aria-pressed="true"] { background:var(--ink); color:var(--bg); border-color:var(--ink); }
+textarea { width:100%; min-height:72px; background:var(--bg); border:1px solid var(--line);
+  border-radius:6px; padding:6px 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Connect Four</h1>
+  <p class="soft">Four in a row. Opponents are listed roughly weakest first.</p>
+
+  <section id="setup" hidden>
+    <p class="status error" id="refused" role="alert" hidden></p>
+    <div class="from panel" id="from" hidden>
+      <span>Starting from a board in the report, with <b id="from-ply"></b> stones placed.</span>
+      <button type="button" id="from-clear">Start from an empty board instead</button>
+    </div>
+    <form id="choose">
+      <div class="scroll"><table class="rungs">
+        <thead><tr><th>Opponent</th><th style="text-align:left">What it knows</th>
+          <th title="Your wins, losses and draws">You W-L-D</th><th>Rating</th></tr></thead>
+        <tbody id="rungs"></tbody>
+      </table></div>
+      <label class="vary"><input type="checkbox" id="noise"> <span>Let search players vary their play
+        <span class="soft small">Off, each plays its best as it sees it, and answers the same moves the same way. On, each draws noise, as in scored games, and can blunder at any budget.</span></span></label>
+      <div class="seats">
+        <label><input type="radio" name="seat" value="0" checked> <span><span class="dot p0"></span>You move first</span></label>
+        <label><input type="radio" name="seat" value="1"> <span><span class="dot p1"></span>You move second</span></label>
+        <button class="primary" type="submit">Sit down</button>
+      </div>
+    </form>
+  </section>
+
+  <section id="game" hidden>
+    <div class="playing">
+      <div>
+        <p class="status" id="status" role="status" aria-live="polite"></p>
+        <div class="drops" id="drops"></div>
+        <svg class="board" id="board" role="img" aria-label="The board"></svg>
+        <div class="moves" id="moves"></div>
+        <div class="actions">
+          <button type="button" id="again" hidden>Play again</button>
+          <button type="button" id="leave">Choose another opponent</button>
+        </div>
+      </div>
+      <div>
+        <div class="panel" id="why"></div>
+        <form class="panel" id="note" hidden>
+          <h2>A note on this game</h2>
+          <fieldset>
+            <legend>How much did you enjoy it?</legend>
+            <div class="stars" id="stars"></div>
+          </fieldset>
+          <fieldset>
+            <legend>Any interesting decision?</legend>
+            <div class="small soft">Mark its move, and say why below if you like.</div>
+            <div class="toggles" id="toggles"></div>
+          </fieldset>
+          <label for="text"><b>Anything else?</b></label>
+          <textarea id="text" maxlength="4000"></textarea>
+          <div class="actions">
+            <button class="primary" type="submit">Keep this note</button>
+            <span class="soft small" id="kept" role="status" aria-live="polite"></span>
+          </div>
+        </form>
+      </div>
+    </div>
+  </section>
+</main>
+<script>
+"use strict";
+const SVG = "http://www.w3.org/2000/svg";
+const $ = id => document.getElementById(id);
+const COLOR = ["red", "blue"];
+
+let shape = null;     // the board's shapes and the rungs (GET /api/setup)
+let state = null;     // the game, whole, as the server last gave it
+let viewed = null;    // the number of moves shown, or null for all of them
+let busy = false;     // a request is out: no second move
+let startBoard = "";  // a board to start from, from a report's link
+let lastRung = null;
+let fallen = null;    // the last move whose stone has been shown falling
+
+function make(tag, attributes = {}, text = "") {
+  const element = document.createElement(tag);
+  for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
+  if (text) element.textContent = text;
+  return element;
+}
+function drawn(tag, attributes) {
+  const element = document.createElementNS(SVG, tag);
+  for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
+  return element;
+}
+function remember(number) {
+  try {
+    if (number === null) sessionStorage.removeItem("game");
+    else sessionStorage.setItem("game", String(number));
+  } catch { /* a blocked store only loses a reload's return to the game */ }
+}
+function remembered() {
+  try { return sessionStorage.getItem("game"); } catch { return null; }
+}
+
+async function ask(path, body) {
+  const options = body === undefined ? {} : {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body),
+  };
+  const response = await fetch(path, options);
+  const answer = await response.json();
+  if (!response.ok) throw new Error(answer.error || `the server answered ${response.status}`);
+  return answer;
+}
+function say(text, isError = false) {
+  const status = $("status");
+  status.textContent = text;
+  status.classList.toggle("error", isError);
+}
+
+// Choosing an opponent.
+function drawSetup() {
+  const rows = $("rungs");
+  rows.replaceChildren();
+  shape.rungs.forEach((rung, i) => {
+    const row = make("tr");
+    const name = make("td");
+    const label = make("label");
+    const radio = make("input", {type: "radio", name: "rung", value: rung.name});
+    radio.checked = rung.name === lastRung || (lastRung === null && i === 0);
+    label.append(radio, make("span", {}, rung.name));
+    name.append(label);
+    const games = rung.won + rung.lost + rung.drawn;
+    row.append(
+      name,
+      make("td", {class: "about"}, rung.about),
+      make("td", {}, games ? `${rung.won}-${rung.lost}-${rung.drawn}` : "–"),
+      make("td", {}, rung.rating === null ? "–" : rung.rating.toFixed(1)),
+    );
+    rows.append(row);
+  });
+  const stones = [...startBoard].filter(c => c !== ".").length;
+  $("from").hidden = !startBoard;
+  $("from-ply").textContent = String(stones);
+  if (startBoard) document.querySelector(`input[name=seat][value="${stones % 2}"]`).checked = true;
+}
+async function showSetup() {
+  remember(null);
+  state = null;
+  busy = false;  // what is still out belongs to the game just left: `act` ignores its answer
+  shape = await ask("/api/setup");
+  drawSetup();
+  $("game").hidden = true;
+  $("setup").hidden = false;
+}
+async function sitDown(rung, seat, noise) {
+  lastRung = rung;
+  $("refused").hidden = true;
+  $("setup").hidden = true;
+  $("game").hidden = false;
+  say("Sitting down…");
+  try {
+    state = await ask("/api/new", {rung, seat, board: startBoard, noise});
+  } catch (error) {
+    if (startBoard) {
+      startBoard = "";  // the link's board can't be played: don't offer it again
+      history.replaceState(null, "", location.pathname);
+    }
+    await showSetup();
+    $("refused").hidden = false;
+    $("refused").textContent = `That didn't start: ${error.message}.`;
+    return;
+  }
+  viewed = null;
+  remember(state.game);
+  history.replaceState(null, "", location.pathname);  // a reload returns here, not to the link
+  render();
+  await replyIfDue();
+}
+
+// Playing.
+function mine() {
+  return state && !state.over && state.to_move === state.seat && viewed === null && !busy;
+}
+async function act(path, body) {
+  const game = state.game;
+  busy = true;
+  render();
+  let answer;
+  try {
+    answer = await ask(path, body);
+  } catch (error) {
+    if (state?.game !== game) return false;
+    busy = false;
+    render();
+    say(error.message, true);
+    return false;
+  }
+  if (state?.game !== game) return false;  // left while it was out
+  state = answer;
+  busy = false;
+  render();
+  return true;
+}
+async function drop(column) {
+  if (!mine() || !state.legal.some(cell => Math.floor(cell / shape.rows) === column)) return;
+  if (await act("/api/move", {game: state.game, column})) await replyIfDue();
+}
+async function replyIfDue() {
+  if (state && !state.over && state.to_move !== state.seat) {
+    await act("/api/reply", {game: state.game});
+  }
+}
+
+function ownersAfter(count) {
+  const owner = [...state.start].map(c => (c === "." ? -1 : Number(c)));
+  state.moves.slice(0, count).forEach(move => { owner[move.cell] = move.player; });
+  return owner;
+}
+function stone(cell, player, extra = {}) {
+  const {x, y} = shape.cells[cell];
+  return drawn("circle", {class: player === 0 ? "first" : "second", cx: x, cy: y, r: shape.radius, ...extra});
+}
+function ring(cell, kind) {
+  const {x, y} = shape.cells[cell];
+  return drawn("circle", {class: kind, cx: x, cy: y, r: shape.radius});
+}
+function drawBoard() {
+  const board = $("board");
+  board.setAttribute("viewBox", `0 0 ${shape.width} ${shape.height}`);
+  board.classList.toggle("open", mine());
+  board.replaceChildren();
+  const hover = column => () => {
+    board.querySelector(".ghost")?.remove();
+    if (!mine()) return;
+    const cell = state.legal.find(c => Math.floor(c / shape.rows) === column);
+    if (cell !== undefined) board.append(stone(cell, state.seat, {class: `ghost ${state.seat === 0 ? "first" : "second"}`}));
+  };
+  shape.cells.forEach((cell, id) => {
+    const column = Math.floor(id / shape.rows);
+    const polygon = drawn("polygon", {class: "cell", points: cell.points});
+    polygon.addEventListener("pointerenter", hover(column));
+    polygon.addEventListener("click", () => drop(column));
+    board.append(polygon);
+  });
+  const count = viewed === null ? state.moves.length : viewed;
+  const owner = ownersAfter(count);
+  const last = count > 0 ? state.moves[count - 1] : null;
+  const move = `${state.game}:${count}`;
+  owner.forEach((who, cell) => {
+    if (who < 0) return;
+    const fresh = viewed === null && last && last.cell === cell && fallen !== move;
+    const circle = stone(cell, who, fresh ? {style: `--fall:${-shape.cells[cell].y}px`} : {});
+    if (fresh) circle.classList.add("drop");
+    board.append(circle);
+  });
+  if (viewed === null) fallen = move;
+  if (last) board.append(ring(last.cell, "last"));
+  if (viewed === null) state.line.forEach(cell => board.append(ring(cell, "win")));
+  board.setAttribute("aria-label", describe(owner));
+}
+function describe(owner) {
+  const parts = [];
+  for (let column = 0; column < shape.columns; column++) {
+    const stones = owner.slice(column * shape.rows, (column + 1) * shape.rows)
+      .filter(who => who >= 0).map(who => COLOR[who]);
+    parts.push(`column ${column + 1}: ${stones.length ? stones.join(", ") : "empty"}`);
+  }
+  return `The board, from the bottom of each column up. ${parts.join("; ")}.`;
+}
+function drawDrops() {
+  const drops = $("drops");
+  drops.style.setProperty("--columns", shape.columns);
+  drops.replaceChildren();
+  for (let column = 0; column < shape.columns; column++) {
+    const button = make("button", {type: "button", "aria-label": `Drop in column ${column + 1}`}, String(column + 1));
+    button.disabled = !mine() || !state.legal.some(cell => Math.floor(cell / shape.rows) === column);
+    button.addEventListener("click", () => drop(column));
+    drops.append(button);
+  }
+}
+function drawMoves() {
+  const moves = $("moves");
+  moves.replaceChildren();
+  const shown = viewed === null ? state.moves.length : viewed;
+  state.moves.forEach((move, i) => {
+    const button = make("button", {type: "button", "aria-current": String(i + 1 === shown), title: `Show the board after move ${i + 1}`});
+    button.append(make("span", {class: `dot p${move.player}`}), String(move.column + 1));
+    button.addEventListener("click", () => {
+      viewed = i + 1 === state.moves.length ? null : i + 1;
+      render();
+    });
+    moves.append(button);
+  });
+}
+
+// Why this move.
+function reasonList(reasons) {
+  const list = make("ul", {class: "reasons"});
+  const shownReasons = reasons.slice(0, 5);
+  shownReasons.forEach(reason => {
+    const item = make("li");
+    item.append(
+      make("span", {class: reason.logits > 0 ? "up" : "down"}, `${reason.logits > 0 ? "+" : "−"}${Math.abs(reason.logits).toFixed(2)}`),
+      make("span", {}, `${reason.text}: ${reason.chosen} here, ${reason.rival} there`),
+    );
+    list.append(item);
+  });
+  if (reasons.length > shownReasons.length) {
+    const rest = reasons.length - shownReasons.length;
+    const item = make("li", {class: "soft"});
+    item.append(make("span"), make("span", {}, `and ${rest} smaller ${rest === 1 ? "one" : "ones"}`));
+    list.append(item);
+  }
+  return list;
+}
+function drawWhy() {
+  const panel = $("why");
+  panel.replaceChildren();
+  const shown = viewed === null ? state.moves.length : viewed;
+  let move = null;
+  for (let i = shown - 1; i >= 0 && move === null; i--) {
+    if (state.moves[i].by !== "person") move = state.moves[i];
+  }
+  panel.append(make("h2", {}, "Why this move"));
+  if (move === null) {
+    panel.append(make("p", {class: "soft small"}, `${state.rung}: ${state.about}`));
+    return;
+  }
+  const why = move.why;
+  const opener = `${state.rung} played column ${move.column + 1} at move ${move.ply + 1}`;
+  if (why === null) {
+    panel.append(make("p", {class: "small"}, `${opener}. ${state.about}`));
+    return;
+  }
+  panel.append(make("p", {class: "small"}, `${opener}, in ${move.seconds.toFixed(2)} s. It expects ${why.expects.toFixed(2)}: 1 is a win for it, 0 a loss, 1/2 a draw.`));
+  const table = make("table", {class: "searched"});
+  const head = make("tr");
+  ["Column", "Simulations", "", "It expects"].forEach(title => head.append(make("th", {}, title)));
+  table.append(head);
+  const most = Math.max(1, ...why.columns.map(column => column.visits));
+  why.columns.forEach(column => {
+    const row = make("tr", column.column === why.column ? {class: "played"} : {});
+    const barCell = make("td", {class: "barcell"});
+    barCell.append(make("span", {class: "bar", style: `width:${100 * column.visits / most}%`}));
+    row.append(
+      make("td", {}, String(column.column + 1)),
+      make("td", {}, String(column.visits)),
+      barCell,
+      make("td", {}, column.value === null ? "–" : column.value.toFixed(2)),
+    );
+    table.append(row);
+  });
+  const scroll = make("div", {class: "scroll"});
+  scroll.append(table);
+  panel.append(scroll);
+  if (why.glance !== why.column) {
+    const moved = state.noise ? "" : " The search moved it.";
+    panel.append(make("p", {class: "small"}, `Before searching, it liked column ${why.glance + 1} best.${moved}`));
+  }
+  const played = why.columns.find(column => column.column === why.column);
+  const next = why.columns.find(column => column.column === why.rival);
+  if (state.noise && next && played.visits <= next.visits && played.value !== null && next.value !== null && played.value < next.value) {
+    panel.append(make("p", {class: "small"}, `Column ${why.rival + 1} had at least as many simulations and a better value. This player draws noise, which likely decided this.`));
+  }
+  if (why.rival === null) {
+    panel.append(make("p", {class: "small soft"}, "No other column was open."));
+    return;
+  }
+  const rival = why.rival + 1;
+  if (!why.named) {
+    panel.append(make("p", {class: "small soft"}, "This player has no named features: its reasons are the search's counts."));
+    return;
+  }
+  if (why.stone.length === 0 && why.board.length === 0) {
+    panel.append(make("p", {class: "small soft"}, `Its features see no difference from column ${rival}, its next choice: only the search does.`));
+    return;
+  }
+  panel.append(make("p", {class: "small"}, `Against column ${rival}, its next choice, in logits of its features (+ favors column ${why.column + 1}). They say how it reads the two moves; the search decides.`));
+  const net = [...why.stone, ...why.board].reduce((total, reason) => total + reason.logits, 0);
+  if (net < 0) {
+    panel.append(make("p", {class: "small"}, `Taken together, its features favor column ${rival}: they don't explain this move.`));
+  }
+  if (why.stone.length) {
+    panel.append(make("h3", {}, "The stone"), reasonList(why.stone));
+  }
+  if (why.board.length) {
+    panel.append(make("h3", {}, "The board after it"), reasonList(why.board));
+  }
+}
+
+// After the game.
+function drawStars() {
+  const stars = $("stars");
+  if (stars.childElementCount) return;
+  for (let rating = 1; rating <= 5; rating++) {
+    const label = make("label");
+    label.append(make("input", {type: "radio", name: "rating", value: String(rating)}), make("span", {}, String(rating)));
+    stars.append(label);
+  }
+  stars.append(make("span", {class: "small soft"}, "1 dull, 5 gripping"));
+}
+function fillNote() {
+  const note = state.note;
+  $("text").value = note ? note.text : "";
+  $("kept").textContent = note ? "Kept with the game." : "";
+  document.querySelectorAll("input[name=rating]").forEach(input => {
+    input.checked = note !== null && note.rating === Number(input.value);
+  });
+}
+function drawToggles() {
+  const toggles = $("toggles");
+  const pressed = new Set((state.note ? state.note.interesting : []).map(String));
+  toggles.replaceChildren();
+  state.moves.forEach((move, i) => {
+    const button = make("button", {
+      type: "button",
+      "aria-pressed": String(pressed.has(String(move.ply))),
+      title: `Move ${i + 1}, by ${move.by === "person" ? "you" : state.rung}`,
+    });
+    button.dataset.ply = String(move.ply);
+    button.append(make("span", {class: `dot p${move.player}`}), String(move.column + 1));
+    button.addEventListener("click", () => {
+      button.setAttribute("aria-pressed", String(button.getAttribute("aria-pressed") !== "true"));
+      viewed = i + 1 === state.moves.length ? null : i + 1;
+      drawViewed();
+    });
+    toggles.append(button);
+  });
+}
+function statusText() {
+  if (viewed !== null) return `After move ${viewed} of ${state.moves.length}. Click the last move to return.`;
+  if (state.over) {
+    if (state.result === "drawn") return `A draw with ${state.rung}.`;
+    return state.result === "won" ? `You beat ${state.rung}.` : `${state.rung} beat you.`;
+  }
+  if (state.to_move === state.seat) return `Your move, as ${COLOR[state.seat]}.`;
+  return `${state.rung} is thinking…`;
+}
+function drawViewed() {
+  drawBoard();
+  drawDrops();
+  drawMoves();
+  drawWhy();
+  say(statusText());
+}
+function render() {
+  drawViewed();
+  $("again").hidden = !state.over;
+  const showNote = state.over;
+  if (showNote && $("note").hidden) {
+    drawStars();
+    drawToggles();
+    fillNote();
+  }
+  $("note").hidden = !showNote;
+}
+
+// Wiring.
+$("choose").addEventListener("submit", event => {
+  event.preventDefault();
+  const form = new FormData(event.target);
+  sitDown(form.get("rung"), Number(form.get("seat")), $("noise").checked);
+});
+$("from-clear").addEventListener("click", () => {
+  startBoard = "";
+  history.replaceState(null, "", location.pathname);
+  drawSetup();
+});
+$("again").addEventListener("click", () => {
+  $("note").hidden = true;
+  $("toggles").replaceChildren();
+  sitDown(state.rung, state.seat, state.noise);
+});
+$("leave").addEventListener("click", () => {
+  $("note").hidden = true;
+  $("toggles").replaceChildren();
+  showSetup();
+});
+$("note").addEventListener("submit", async event => {
+  event.preventDefault();
+  const chosen = new FormData(event.target).get("rating");
+  const interesting = [...$("toggles").querySelectorAll('[aria-pressed="true"]')].map(b => Number(b.dataset.ply));
+  const game = state.game;
+  try {
+    const answer = await ask("/api/note", {
+      game,
+      rating: chosen === null ? null : Number(chosen),
+      interesting,
+      text: $("text").value,
+    });
+    if (state?.game !== game) return;  // left while it was out
+    state = answer;
+    $("kept").textContent = "Kept with the game.";
+  } catch (error) {
+    if (state?.game === game) $("kept").textContent = error.message;
+  }
+});
+document.addEventListener("keydown", event => {
+  const typing = event.target instanceof Element && event.target.matches("input, textarea, select");
+  if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
+  const column = Number(event.key) - 1;
+  if (shape && state && Number.isInteger(column) && column >= 0 && column < shape.columns) drop(column);
+});
+$("board").addEventListener("pointerleave", () => $("board").querySelector(".ghost")?.remove());
+
+async function begin() {
+  const link = /^#board=([.01]+)$/.exec(location.hash);
+  startBoard = link ? link[1] : "";
+  const number = remembered();
+  if (number !== null && !link) {
+    try {
+      shape = await ask("/api/setup");
+      state = await ask("/api/state", {game: Number(number)});
+      lastRung = state.rung;
+      startBoard = /[01]/.test(state.start) ? state.start : "";  // "Play again" starts there too
+      $("game").hidden = false;
+      render();
+      await replyIfDue();
+      return;
+    } catch { /* that run has ended: choose again */ }
+  }
+  await showSetup();
+}
+begin().catch(error => {
+  $("game").hidden = false;
+  say(error.message, true);
+});
+</script>
+</body>
+</html>

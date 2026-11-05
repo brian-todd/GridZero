@@ -1,6 +1,6 @@
 """Colonies' learned players: the size of network the experiments save, and weights as players.
 
-The weights don't record the network's size (finding E2) nor how it was trained, so the
+The weights don't record the network's size nor how it was trained, so the
 experiments share one size; a network's chance codes (Stochastic MuZero) are read from the
 encoder its weights hold. A weights file is named by a **spec**: its path, then tags each
 after an ``@``: ``root`` for a network trained before 2026-10-30, whose policy only knew legal

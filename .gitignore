@@ -32,6 +32,9 @@ runs/
 /*.png
 /*.gif
 /*.jsonl
+/*.json
+/*.npz
+/*.html
 
 # Internal development documents: kept locally, never published
 /docs/

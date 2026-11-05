@@ -7,7 +7,7 @@ decisions or a search's can be scored exactly. Both read a game only through `ga
 (`legal`, `step`, `player`) and `Position.key`, and draw nothing.
 
 Values have no distance to the end: every move of a lost position has the same value, so a
-player choosing among `optimal`'s actions plays a lost game aimlessly (finding G10).
+player choosing among `optimal`'s actions plays a lost game aimlessly.
 """
 
 from typing import Any
