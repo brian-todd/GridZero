@@ -492,7 +492,9 @@ class LatentSearch[L]:
         """Return the scaled completed values of the node's actions."""
         q = np.divide(node.w, node.n, out=np.zeros(node.n.size), where=node.n > 0)
         p = self.player
-        return sigma(q, node.value, node.n, node.logits, p.c_visit, p.c_scale)
+        return sigma(
+            q, node.value, node.n, node.logits, p.c_visit, p.c_scale, rescale=node is self.root
+        )
 
     def _at_root(self) -> int:
         """Return the root's action for this simulation, by sequential halving."""

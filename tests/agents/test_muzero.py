@@ -620,3 +620,18 @@ def test_self_play_and_reanalysis_run_on_a_stochastic_model(data):
     many = reanalyze(GAME, player, data, rows, batch=7)
     np.testing.assert_array_equal(one.policy, many.policy)
     assert not np.array_equal(one.policy, data.policy)
+
+
+def test_only_the_root_stretches_a_vanishing_gap_between_tried_and_untried_actions():
+    obs, legal = root()
+    search = LatentSearch(MuZeroPlayer(Oracle(target=0)), obs, legal, np.random.default_rng(0))
+    leaf = search.leaf()
+    assert leaf is not None
+    search.expand(leaf, (), np.zeros(legal.size), -0.2)  # 0.4 in the tree
+    node = search.root
+    assert node is not None
+    node.n[0] = 1000
+    node.w[0] = 600.0
+    below = dataclasses.replace(node)  # the same statistics at a node that isn't the root
+    assert search._sigma(node)[0] - search._sigma(node)[1] > 100.0
+    assert search._sigma(below)[0] - search._sigma(below)[1] < 0.03

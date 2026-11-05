@@ -15,7 +15,7 @@ or rules, its players, how to run its experiments, and what they found.
 | [`simulations/settlers`](simulations/settlers) | Farmers and herders settling a world of seasons, droughts, raids and worn-out soil | Eight phases over thousands of steps |
 | [`simulations/population_evolution`](simulations/population_evolution) | One founder species on an empty planet, adapting to its climates and splitting into species | A heritable trait as a component axis, against exact theory |
 | [`games/tactics`](games/tactics) | A two-player skirmish on a 24x24 hex board with walls, rubble and four kinds of unit | Dice, long games, search and AlphaZero on a large board |
-| [`games/in_a_row`](games/in_a_row) | k in a row, from tic-tac-toe to Connect Four | AlphaZero from scratch, against exact values |
+| [`games/in_a_row`](games/in_a_row) | k in a row, from tic-tac-toe to Connect Four | AlphaZero from scratch, against exact values; code players fit to an agent; a page to play them on |
 | [`games/voronoi`](games/voronoi) | The Voronoi game on a planet: stones on land, the most land nearest one's stones wins | Any number of players, off a lattice |
 | [`games/colonies`](games/colonies) | Orders on a planet under fog of war, each round resolved as a simulation | Hidden information, moves made at once, players knocked out, and MuZero |
 
@@ -31,6 +31,10 @@ Each README dates its findings; these are the main ones.
   its search, it beat a scripted player that wins when it can and blocks the other's wins
   96-2-2, and it opens in the center column, the only winning first move. Exact values of small
   boards found a flaw in the search, since fixed.
+- **A search can stop looking** (in_a_row, 2026-11-05): rescaling values at every node, as `mctx`
+  does, locked nodes below the root onto the first action that looked better than the node's own
+  value. Rescaling at the root only beat the old search 77-22-1 with fitted constants at 1024
+  simulations, and made budgets count: a flat top of the ladder spread out.
 - **Search beats heuristics on Tactics** (2026-10-25): open-loop tree search beat the greedy
   player 89% of the time. AlphaZero learned on a 9x9 board, but its self-play drifted into
   draws and never beat greedy: Tactics' incentives stall it.

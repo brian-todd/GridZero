@@ -5,6 +5,7 @@ import pytest
 
 from agents_demo import GAMBLE, PLACE, Patches, PatchesPosition, PatchesState
 from gridzero.agents import AlphaZeroPlayer, UniformPlayer, self_play
+from gridzero.agents.zero import sigma
 from gridzero.game import series, tally
 
 GAME = Patches()
@@ -210,9 +211,9 @@ class Rollout:
 @pytest.mark.slow
 def test_the_search_beats_a_uniform_player_from_either_seat():
     # Patches is noisy (uniform players split 200-172-28 over 400 games), and the search wins
-    # from both seats: 47-11 at 512 simulations, 40-13 at 128 (2026-10-28).
+    # from both seats: 150-41-9 at 512 simulations, 135-53-12 at 128 (2026-11-05).
     player = AlphaZeroPlayer(Rollout(), simulations=128)
-    records = series(GAME, [("search", player), ("uniform", UniformPlayer())], 20, seed=0)
+    records = series(GAME, [("search", player), ("uniform", UniformPlayer())], 40, seed=0)
     for seat in (0, 1):
         mine = [r for r in records if r.names[seat] == "search"]
         assert sum(r.winner == "search" for r in mine) > sum(r.winner == "uniform" for r in mine)
@@ -248,3 +249,25 @@ def test_self_play_reports_each_game_with_its_last_position():
         assert p.final.over
         assert (p.plies, p.winner) == (p.final.ply, p.final.winner)
         assert p.kept == 0 < p.searched <= p.plies
+
+
+def test_sigma_rescales_over_the_node_s_actions_only_when_asked():
+    q = np.array([0.2, 0.3, 0.0])
+    n = np.array([1, 1, 0], dtype=np.int64)
+    logits = np.log(np.array([0.5, 0.25, 0.25]))
+    # The unvisited action's value: the raw 0.4 mixed over 2 visits with the prior's mean of q.
+    mixed = (0.4 + 2 * (0.5 * 0.2 + 0.25 * 0.3) / 0.75) / 3
+    plain = sigma(q, 0.4, n, logits, 10.0, 0.5, rescale=False)
+    np.testing.assert_allclose(plain, 5.5 * np.array([0.2, 0.3, mixed]))
+    full = sigma(q, 0.4, n, logits, 10.0, 0.5, rescale=True)
+    np.testing.assert_allclose(full, 5.5 * (plain / 5.5 - 0.2) / 0.1)
+
+
+def test_sigma_keeps_a_vanishing_gap_small_below_the_root():
+    # One action tried many times: the mix for the others is just under its mean.
+    q = np.array([0.6, 0.0, 0.0])
+    n = np.array([1000, 0, 0], dtype=np.int64)
+    logits = np.log(np.full(3, 1 / 3))
+    plain = sigma(q, 0.4, n, logits, 50.0, 0.1, rescale=False)
+    assert plain[0] - plain[1] < 0.03
+    assert sigma(q, 0.4, n, logits, 50.0, 0.1, rescale=True)[0] > 100.0
