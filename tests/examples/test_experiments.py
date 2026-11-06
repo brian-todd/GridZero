@@ -1,6 +1,7 @@
 """Every experiment that finishes in seconds at its smallest, run once through ``run.py``.
 
 Not run here: ``tactics.watch`` (a GIF of hundreds of frames, a minute),
+``tactics.code_games`` (a minute a game, whose parts `test_lessons` runs small),
 ``in_a_row.code_report`` (a deep search over hundreds of positions, whose parts `test_report`
 runs small), ``in_a_row.play`` (a server, until stopped, whose parts `test_play` starts and plays),
 and the training experiments ``tactics.zero_scratch``, ``in_a_row.zero_scratch`` and
@@ -170,6 +171,12 @@ def test_colonies_muzero_check(capsys, weights):
 def test_search(capsys):
     out = ran(capsys, "tactics.search", 1, 1)
     assert "Check: search beats greedy at 1 simulations:" in out
+
+
+def test_tactics_code_games_refuses_a_prefix_already_used(capsys, tmp_path):
+    (tmp_path / "code_lessons.npz").write_text("")
+    with pytest.raises(FileExistsError, match="has been used"):
+        ran(capsys, "tactics.code_games", 1, tmp_path / "code")
 
 
 def test_tactics_code_ladder(capsys):

@@ -72,6 +72,7 @@ turn, so a network plays both sides the same way.
 |---|---|
 | `tactics.tournament [starts] [prefix]` | Greedy against random, and greedy against itself (is the game even by side?); a picture of a game's end |
 | `tactics.search [starts] [budgets...]` | The search player against greedy at a few budgets of simulations |
+| `tactics.code_games [games] [prefix] [work_plans] [replica] [minutes]` | The search player against itself on 15x15, saved as `{prefix}_lessons.npz` for code players to fit to |
 | `tactics.code_ladder [starts] [size] [simulations...]` | The code player against random and greedy, and what a decision costs |
 | `tactics.rules [starts] [prefix] [hold_rounds...]` | How games end, pure styles, the engineer against an archer, and rosters, as tables and `{prefix}_rules.json`, to compare versions of the objective |
 | `tactics.watch [start] [prefix] [players...]` | One game, decision by decision, in a window or a GIF (random, greedy, sitter, search) |
@@ -143,6 +144,11 @@ search, rerun once greedy went back for an owned point an enemy stands on; the r
 more simulations don't make up for its judgment. On the full board at 32 simulations it went 96-0
 and 35-61, so it doesn't lean on the small board.
 
+**Search against itself** (2026-11-06, `tactics.code_games`, 600 games each on 15x15, 50 simulations):
+5.3 rounds a game (longest 10). With plans to work, team 0 won 54% and an engineer changed 3.5 tiles a
+game; without them, team 0 won 51% and it changed 0.1. So the lean to team 1 under greedy (43%) doesn't
+show between search players, and 600 games only measure a seat to about 4 points either way.
+
 **Under earlier rules** (twelve fixed units, no point, hit points at the round cap), kept for the
 history of the agents:
 
@@ -182,7 +188,8 @@ experiment can make any more. `zero_check` still plays saved full-size weights.
 | `state.py` | `TacticsState`, `Unit`, `Hold`, `TacticsPosition`, `Verb` |
 | `events.py` | What a step did: `Placed`, `Moved`, `Built`, `Attacked`, `Captured`, `GameOver`, ... |
 | `players.py` | `RandomPlayer`, `GreedyPlayer`, `SitterPlayer` |
-| `search.py` | `SearchPlayer`, `Plan`, `standing`, `material` |
+| `search.py` | `SearchPlayer`, `Plan`, `Judgment`, `standing`, `material` |
 | `code_player.py` | `CodeEvaluator`, `HAND_PICKED`, `value_features`, `move_features` |
+| `lessons.py` | `Lessons`, `lessons_of`, `positions_of`, `teach`: a search player's games kept to fit to |
 | `match.py` | `EVAL_SEED`, `small_rules`, `summarize`, `balance` |
 | `text.py`, `pictures.py` | Events and summaries as text; boards drawn as hexes |

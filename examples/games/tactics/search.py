@@ -40,6 +40,19 @@ class Plan(NamedTuple):
     """Work on a tile after moving, in place of attacking; skipped if no longer legal."""
 
 
+class Judgment(NamedTuple):
+    """What a search made of a unit's turn."""
+
+    plans: tuple[Plan, ...]
+    """The plans tried at the root."""
+    visits: tuple[int, ...]
+    """The simulations through each."""
+    values: tuple[float, ...]
+    """Team 0's mean value through each, in [0, 1]."""
+    value: float
+    """Team 0's mean value over every simulation, in [0, 1]."""
+
+
 @dataclass(frozen=True)
 class SearchPlayer:
     """Picks each unit's turn by open-loop Monte Carlo tree search over plans.
@@ -118,14 +131,49 @@ class SearchPlayer:
         rng: np.random.Generator,
     ) -> Action:
         """Return the next action of this turn's plan, searching for one first."""
+        return self.decide(game, player, position, legal, rng)[0]
+
+    def decide(
+        self,
+        game: Tactics,
+        player: int,
+        position: TacticsPosition,
+        legal: NDArray[np.bool_],
+        rng: np.random.Generator,
+    ) -> tuple[Action, Judgment | None]:
+        """Return what the player does, and what its search made of the turn if it searched here.
+
+        Parameters
+        ----------
+        game : Tactics
+            The rules.
+        player : int
+            The player it is.
+        position : TacticsPosition
+            The position.
+        legal : ndarray of bool, shape (n_verbs, n_cells)
+            ``game.legal(position)``.
+        rng : numpy.random.Generator
+            The source of every seed and tie.
+
+        Returns
+        -------
+        action : Action
+            The action.
+        judgment : Judgment or None
+            The search's, at the first decision of a unit's turn with a choice in it; None when
+            this decision followed a plan already chosen, was deployment, or had one legal action.
+        """
         if position.deploying or np.count_nonzero(legal) == 1:
-            return self.greedy(game, player, position, legal, rng)
+            return self.greedy(game, player, position, legal, rng), None
         a = game.active(position)
         key = (position.seed, position.round, int(position.state.units.uid[a]))
+        judgment = None
         if key not in self._chosen:
             self._chosen.clear()
-            self._chosen[key] = self.search(game, position, rng)
-        return self._next(game, position, legal, self._chosen[key], rng)
+            judgment = self.judge(game, position, rng)
+            self._chosen[key] = self._pick(judgment, rng)
+        return self._next(game, position, legal, self._chosen[key], rng), judgment
 
     def search(self, game: Tactics, position: TacticsPosition, rng: np.random.Generator) -> Plan:
         """Return the plan the search prefers for the acting unit's turn.
@@ -149,6 +197,30 @@ class SearchPlayer:
         ValueError
             If the game is over or still in deployment.
         """
+        return self._pick(self.judge(game, position, rng), rng)
+
+    def judge(self, game: Tactics, position: TacticsPosition, rng: np.random.Generator) -> Judgment:
+        """Return what the search makes of the acting unit's turn.
+
+        Parameters
+        ----------
+        game : Tactics
+            The rules.
+        position : TacticsPosition
+            A position in battle, not over.
+        rng : numpy.random.Generator
+            The source of every seed and tie the search draws.
+
+        Returns
+        -------
+        Judgment
+            The plans tried at the root, their visits and values, and the root's value.
+
+        Raises
+        ------
+        ValueError
+            If the game is over or still in deployment.
+        """
         if position.over or position.deploying:
             raise ValueError("search needs a position in battle, not over")
         root = _Node()
@@ -156,9 +228,18 @@ class SearchPlayer:
             sampled = replace(position, seed=int(rng.integers(2**63)))
             self._simulate(game, root, sampled, rng)
         uid = int(position.state.units.uid[game.active(position)])
-        tried = [(plan, child.n) for (who, plan), child in root.children.items() if who == uid]
-        most = max(n for _, n in tried)
-        best = [plan for plan, n in tried if n == most]
+        tried = [(plan, child) for (who, plan), child in root.children.items() if who == uid]
+        return Judgment(
+            tuple(plan for plan, _ in tried),
+            tuple(child.n for _, child in tried),
+            tuple(child.w / child.n for _, child in tried),
+            root.w / root.n,
+        )
+
+    def _pick(self, judgment: Judgment, rng: np.random.Generator) -> Plan:
+        """Return the plan tried most; of plans tried equally, one drawn at random."""
+        most = max(judgment.visits)
+        best = [p for p, n in zip(judgment.plans, judgment.visits, strict=True) if n == most]
         return best[int(rng.integers(len(best)))]
 
     def candidates(

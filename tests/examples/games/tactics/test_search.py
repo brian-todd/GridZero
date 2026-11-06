@@ -317,9 +317,9 @@ class CountingSearch(SearchPlayer):
 
     plies: list[int] = dataclasses.field(default_factory=list)
 
-    def search(self, game, position, rng):
+    def judge(self, game, position, rng):
         self.plies.append(position.ply)
-        return super().search(game, position, rng)
+        return super().judge(game, position, rng)
 
 
 def test_the_player_searches_once_per_turn():

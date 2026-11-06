@@ -28,6 +28,7 @@ EXPERIMENTS = {
     "population_evolution": "examples.simulations.population_evolution.experiment",
     "tactics.tournament": "examples.games.tactics.experiments.tournament",
     "tactics.search": "examples.games.tactics.experiments.search",
+    "tactics.code_games": "examples.games.tactics.experiments.code_games",
     "tactics.code_ladder": "examples.games.tactics.experiments.code_ladder",
     "tactics.rules": "examples.games.tactics.experiments.rules",
     "tactics.zero_check": "examples.games.tactics.experiments.zero_check",

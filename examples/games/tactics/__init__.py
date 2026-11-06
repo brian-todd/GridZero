@@ -54,9 +54,11 @@ Tactics.observe, Tactics.planes, Tactics.frame
     What a team sees: planes per cell in its own frame, for networks (`agents.frame.Learnable`).
 event_text, summary_text
     The events and what a set of games showed, as text, for terminals and logs.
-SearchPlayer, Plan, material, standing
+SearchPlayer, Plan, Judgment, material, standing
     A player that searches plans for whole unit turns by open-loop Monte Carlo tree search,
     judged by the greedy player.
+Lessons, lessons_of, positions_of, teach
+    A search player's games kept to learn from, as seeds and actions, with what it judged.
 CodeEvaluator, HAND_PICKED, value_features, move_features, VALUE_FEATURES, MOVE_FEATURES
     A code player: judges positions by named features and constants, for `agents.AlphaZeroPlayer`.
 
@@ -93,6 +95,7 @@ from .events import (
     Turned,
 )
 from .game import Odds, Tactics
+from .lessons import Lessons, lessons_of, positions_of, teach
 from .match import EVAL_SEED, Balance, Summary, balance, small_rules, summarize
 from .players import GreedyPlayer, RandomPlayer, SitterPlayer
 from .rules import (
@@ -104,7 +107,7 @@ from .rules import (
     hits,
     roll_needed,
 )
-from .search import Plan, SearchPlayer, material, standing
+from .search import Judgment, Plan, SearchPlayer, material, standing
 from .state import Hold, TacticsPosition, TacticsState, Unit, Units, Verb, units
 from .text import event_text, summary_text
 
@@ -130,6 +133,8 @@ __all__ = [
     "GameOver",
     "GreedyPlayer",
     "Hold",
+    "Judgment",
+    "Lessons",
     "Moved",
     "Odds",
     "Placed",
@@ -155,14 +160,17 @@ __all__ = [
     "hit_chance",
     "hits",
     "homes",
+    "lessons_of",
     "make_board",
     "material",
     "move_features",
+    "positions_of",
     "roll_needed",
     "small_rules",
     "standing",
     "summarize",
     "summary_text",
+    "teach",
     "units",
     "value_features",
 ]
