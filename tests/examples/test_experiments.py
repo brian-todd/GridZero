@@ -234,11 +234,22 @@ def test_tactics_code_fit_needs_lessons(capsys, tmp_path):
 
 @pytest.mark.slow
 def test_rules(capsys, tmp_path):
-    out = ran(capsys, "tactics.rules", 1, tmp_path / "rules", 5)
+    out = ran(capsys, "tactics.rules", "greedy", 1, tmp_path / "rules", 1, 5)
     assert "### Styles, 5 rounds to hold" in out
     report = json.loads((tmp_path / "rules_rules.json").read_text())
     assert set(report["self_play"]) == {"hold 5"}
     assert "seeker v sitter" in report["styles"]
+    assert report["own_picks"] is None
+    assert report["rosters"]["scores"]
+
+
+@pytest.mark.slow
+def test_rules_with_a_code_player_reports_its_own_picks_and_no_styles(capsys, tmp_path):
+    out = ran(capsys, "tactics.rules", "hand", 1, tmp_path / "rules", 2, 5)
+    assert "### Its own picks, 5 rounds to hold" in out
+    report = json.loads((tmp_path / "rules_rules.json").read_text())
+    assert report["styles"] == {}
+    assert sum(report["own_picks"]["picked"].values()) == 4
     assert report["rosters"]["scores"]
 
 

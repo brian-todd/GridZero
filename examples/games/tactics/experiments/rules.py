@@ -1,30 +1,36 @@
 """What the rules do: how games end, who wins by which style, and which rosters pay.
 
-Measures any version of the objective (`objective.py`) with greedy players, so that two versions
-compare directly: run it before and after a change, and compare the JSON files. It reports:
+Measures any version of the objective (`objective.py`) with greedy players or with a code player,
+fielding the rosters it is given as greedy does, so that two versions, or two players, compare
+directly: run it before and after a change, and compare the JSON files. It reports:
 
 - **self-play at each ``hold_rounds``:** how games end, how long they run, how many units die,
-  flips, how often the first capturer wins, and team 0's share of decided games (each game with
-  dice of its own),
-- **styles, at the default rules:** a point-seeker, a fighter that ignores the point, a capper
-  that barely fights, and a sitter, against each other,
+  flips, how often the first capturer wins, team 0's share of decided games (each game with dice
+  of its own), and what each kind of unit did,
+- **styles, at the default rules (greedy only):** a point-seeker, a fighter that ignores the point,
+  a capper that barely fights, and a sitter, against each other,
+- **its own picks, at the default rules (code player only):** the roster it fields when free to
+  choose, in self-play, and against itself on greedy's default roster,
 - **the engineer, at each ``hold_rounds``:** greedy's default roster against the same roster with
   an archer for the engineer, and how much engineers work: its worth depends on the objective,
 - **rosters, at the default rules:** every roster the caps allow against greedy's default roster
   (the same dice both ways), with what a slot of each kind is worth over a footsoldier.
 
-It writes everything to ``{prefix}_rules.json``, and prints it as tables. Greedy players give a
-lower bound on the units whose worth is in how well they are used, such as archers and engineers:
-check by watching games before changing a rule on the strength of these numbers.
+It writes everything to ``{prefix}_rules.json`` after each part, and prints it as tables. Greedy
+players give a lower bound on the units whose worth is in how well they are used, such as archers
+and engineers: check by watching games before changing a rule on the strength of these numbers.
 
-Run with ``uv run python run.py tactics.rules [starts] [prefix] [hold_rounds...]``: by default 120
-starts and hold lengths of 4, 5, 6 and 8, about 2 minutes on 24 threads.
+Run with ``uv run python run.py tactics.rules [weights] [starts] [prefix] [simulations]
+[hold_rounds...]``: by default greedy players, 120 starts and hold lengths of 4, 5, 6 and 8, about
+2 minutes on 24 threads. A code player (``hand``, or constants saved by ``tactics.code_fit``) plays
+at 128 simulations, about 2 seconds a game on the full board: 96 starts take over an hour.
 """
 
+import collections
 import itertools
 import json
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import TypedDict
 
@@ -33,6 +39,9 @@ import numpy as np
 from examples.games import CORES
 from examples.games.tactics import (
     EVAL_SEED,
+    HAND_PICKED,
+    CodeEvaluator,
+    Fielded,
     GreedyPlayer,
     SitterPlayer,
     Tactics,
@@ -40,9 +49,23 @@ from examples.games.tactics import (
     default_roster,
     summarize,
 )
-from gridzero.game import Player, Record, series
+from gridzero.agents import AlphaZeroPlayer
+from gridzero.game import Player, Record, replay, series
 
 type TacticsPlayer = Player[Tactics, TacticsPosition]
+
+type Fielding = Callable[[tuple[int, ...] | None], TacticsPlayer]
+"""Makes the player being measured, fielding a roster, or greedy's default one for None."""
+
+
+class KindFigures(TypedDict):
+    """What one kind of unit did, a game (`figures`)."""
+
+    placed: float
+    dealt: float
+    taken: float
+    kills: float
+    losses: float
 
 
 class Figures(TypedDict):
@@ -62,6 +85,7 @@ class Figures(TypedDict):
     shots_hit: float
     built: float
     broke: float
+    kinds: dict[str, KindFigures]
 
 
 class Duel(Figures):
@@ -86,6 +110,14 @@ class Rosters(TypedDict):
     per_slot: dict[str, float]
 
 
+class OwnPicks(TypedDict):
+    """A player free to choose its roster (`own_picks`)."""
+
+    picked: dict[str, int]
+    self_play: Figures
+    against_default: Duel
+
+
 class Report(TypedDict):
     """All that `main` writes to the JSON file."""
 
@@ -96,7 +128,8 @@ class Report(TypedDict):
     self_play: dict[str, Figures]
     engineer: dict[str, Swap]
     styles: dict[str, Duel]
-    rosters: Rosters
+    own_picks: OwnPicks | None
+    rosters: Rosters | None
 
 
 def figures(game: Tactics, records: Sequence[Record[TacticsPosition]]) -> Figures:
@@ -116,7 +149,8 @@ def figures(game: Tactics, records: Sequence[Record[TacticsPosition]]) -> Figure
         ``rounds_p99`` and ``rounds_max``, ``endings`` as shares of games, ``dead`` (mean units
         lost a game), ``flips`` (mean), ``first_capturer_won`` (share of games), ``team_0``
         (team 0's share of the decided games), ``shots`` (mean deferred attacks a game) with the
-        share that hit, ``shots_hit``, and ``built`` and ``broke`` (mean tiles a game).
+        share that hit, ``shots_hit``, ``built`` and ``broke`` (mean tiles a game), and
+        ``kinds``: by kind's name, what its units did, a game.
     """
     summary = summarize(game, records)
     games = summary.tally.games
@@ -137,6 +171,16 @@ def figures(game: Tactics, records: Sequence[Record[TacticsPosition]]) -> Figure
         "shots_hit": summary.shots_hit / max(summary.shots, 1),
         "built": summary.built / games,
         "broke": summary.broke / games,
+        "kinds": {
+            stats.name: {
+                "placed": float(summary.placed[k] / games),
+                "dealt": float(summary.damage_dealt[k] / games),
+                "taken": float(summary.damage_taken[k] / games),
+                "kills": float(summary.kills[k] / games),
+                "losses": float(summary.losses[k] / games),
+            }
+            for k, stats in enumerate(game.units)
+        },
     }
 
 
@@ -202,8 +246,67 @@ def styles(game: Tactics, starts: int, workers: int) -> dict[str, Duel]:
     return {name: duel(game, a, b, starts, workers) for name, (a, b) in matches.items()}
 
 
-def engineer_swap(game: Tactics, starts: int, workers: int) -> Swap:
-    """Play greedy's default roster against the same roster with an archer for the engineer.
+def greedy_fielding(roster: tuple[int, ...] | None) -> TacticsPlayer:
+    """Return a greedy player fielding a roster (see `Fielding`)."""
+    return GreedyPlayer(roster=roster)
+
+
+def code_fielding(play: TacticsPlayer) -> Fielding:
+    """Return what makes a player field a roster as greedy does, playing on as itself."""
+    return lambda roster: Fielded(play, GreedyPlayer(roster=roster))
+
+
+def own_picks(
+    game: Tactics, free: TacticsPlayer, make: Fielding, starts: int, workers: int
+) -> OwnPicks:
+    """Play a player free to choose its roster against itself, and against itself on the default.
+
+    Parameters
+    ----------
+    game : Tactics
+        The rules.
+    free : Player
+        The player, choosing its roster.
+    make : Fielding
+        Makes the same player fielding a roster.
+    starts : int
+        Starts of each series, each played twice.
+    workers : int
+        Games played at once.
+
+    Returns
+    -------
+    OwnPicks
+        ``picked``: teams by the roster they fielded in self-play, the most common first, keyed by
+        its text; ``self_play``: those games' figures; ``against_default``: `duel`'s figures, from
+        the side choosing its roster.
+    """
+    records = series(
+        game, [("a", free), ("b", free)], starts, EVAL_SEED, same_dice=False, workers=workers
+    )
+    picked: collections.Counter[str] = collections.Counter()
+    for record in records:
+        units = next(p for p in replay(game, record) if not p.deploying).state.units
+        for team in range(2):
+            picked[
+                str(
+                    [
+                        int(((units.kind == k) & (units.team == team)).sum())
+                        for k in range(len(game.units))
+                    ]
+                )
+            ] += 1
+    return {
+        "picked": dict(picked.most_common()),
+        "self_play": figures(game, records),
+        "against_default": duel(game, free, make(None), starts, workers),
+    }
+
+
+def engineer_swap(
+    game: Tactics, starts: int, workers: int, make: Fielding = greedy_fielding
+) -> Swap:
+    """Play the default roster against the same roster with an archer for the engineer.
 
     Parameters
     ----------
@@ -213,6 +316,8 @@ def engineer_swap(game: Tactics, starts: int, workers: int) -> Swap:
         Starts, each played twice with the sides swapped.
     workers : int
         Games played at once.
+    make : Fielding, default `greedy_fielding`
+        Makes the players.
 
     Returns
     -------
@@ -234,14 +339,16 @@ def engineer_swap(game: Tactics, starts: int, workers: int) -> Swap:
     swapped = list(roster)
     swapped[builds] -= 1
     swapped[defers] += 1
-    result = duel(
-        game, GreedyPlayer(roster=roster), GreedyPlayer(roster=tuple(swapped)), starts, workers
-    )
+    result = duel(game, make(roster), make(tuple(swapped)), starts, workers)
     return Swap(**result, with_engineer=list(roster), with_archer=swapped)
 
 
 def rosters(
-    game: Tactics, starts: int, workers: int, base: tuple[int, ...] | None = None
+    game: Tactics,
+    starts: int,
+    workers: int,
+    base: tuple[int, ...] | None = None,
+    make: Fielding = greedy_fielding,
 ) -> Rosters:
     """Play every roster the caps allow against one roster, and fit what each kind is worth.
 
@@ -255,6 +362,8 @@ def rosters(
         Games played at once.
     base : tuple of int, optional
         The roster to play against; by default `default_roster`.
+    make : Fielding, default `greedy_fielding`
+        Makes the players.
 
     Returns
     -------
@@ -272,9 +381,7 @@ def rosters(
     ]
     scored = []
     for roster in every:
-        result = duel(
-            game, GreedyPlayer(roster=roster), GreedyPlayer(roster=opponent), starts, workers
-        )
+        result = duel(game, make(roster), make(opponent), starts, workers)
         scored.append((roster, result["won"] / result["games"]))
     scored.sort(key=lambda item: -item[1])
     x = np.array([np.subtract(r, opponent) for r, _ in scored], dtype=np.float64)
@@ -309,60 +416,111 @@ def _table(rows: Mapping[str, Figures | Duel]) -> str:
     return "\n".join(lines)
 
 
-def main(starts: str = "120", prefix: str = "tactics", *hold_rounds: str) -> None:
+def _kinds(rows: Mapping[str, Figures]) -> str:
+    """Return what each kind of unit did as a Markdown table, a row per label and kind."""
+    lines = [
+        "| | Kind | Placed | Dealt | Taken | Kills | Losses |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for label, f in rows.items():
+        lines += [
+            f"| {label} | {kind} | {k['placed']:.1f} | {k['dealt']:.1f} | {k['taken']:.1f} "
+            f"| {k['kills']:.1f} | {k['losses']:.1f} |"
+            for kind, k in f["kinds"].items()
+        ]
+    return "\n".join(lines)
+
+
+def _write(path: str, report: Report) -> None:
+    """Write what has been measured so far, so a run stopped early keeps it."""
+    with open(path, "w", encoding="utf-8") as out:
+        json.dump(report, out, indent=1)
+
+
+def main(
+    weights: str = "greedy",
+    starts: str = "120",
+    prefix: str = "tactics",
+    simulations: str = "128",
+    *hold_rounds: str,
+) -> None:
     """Measure the rules, print the tables, and write them to ``{prefix}_rules.json``.
 
     Parameters
     ----------
+    weights : str, default "greedy"
+        Who plays: ``greedy``, or a code player on `HAND_PICKED` (``hand``) or on constants saved
+        by ``tactics.code_fit``.
     starts : str, default "120"
         Starts of each series, each played twice; rosters play a tenth of them, at least 1.
     prefix : str, default "tactics"
         Where the numbers go: ``{prefix}_rules.json``.
+    simulations : str, default "128"
+        The code player's simulations a decision.
     *hold_rounds : str
         Rounds in a row to win, one self-play series each: 4, 5, 6 and 8 if none.
     """
     n = int(starts)
     holds = [int(h) for h in hold_rounds] or [4, 5, 6, 8]
     game = Tactics()
+    path = f"{prefix}_rules.json"
+    make = greedy_fielding
+    free: TacticsPlayer | None = None
+    if weights != "greedy":
+        evaluator = HAND_PICKED if weights == "hand" else CodeEvaluator.load(weights)
+        free = AlphaZeroPlayer(evaluator, simulations=int(simulations))
+        make = code_fielding(free)
+    report: Report = {
+        "starts": n,
+        "hold_rounds": game.hold_rounds,
+        "capture_by": game.capture_by,
+        "max_rounds": game.max_rounds,
+        "self_play": {},
+        "engineer": {},
+        "styles": {},
+        "own_picks": None,
+        "rosters": None,
+    }
     began = time.perf_counter()
-    selfplay: dict[str, Figures] = {}
+    selfplay = report["self_play"]
     for hold in holds:
         rules = replace(game, hold_rounds=hold)
         records = series(
             rules,
-            [("a", GreedyPlayer()), ("b", GreedyPlayer())],
+            [("a", make(None)), ("b", make(None))],
             n,
             EVAL_SEED,
             same_dice=False,
             workers=CORES,
         )
         selfplay[f"hold {hold}"] = figures(rules, records)
-    print(f"### Greedy against itself, by rounds to hold\n\n{_table(selfplay)}")
+        _write(path, report)
+    print(f"### Against itself, by rounds to hold\n\n{_table(selfplay)}\n\n{_kinds(selfplay)}")
 
-    swaps = {f"hold {h}": engineer_swap(replace(game, hold_rounds=h), n, CORES) for h in holds}
-    print(f"\n### Engineer against archer, by rounds to hold\n\n{_table(swaps)}")
+    swaps = report["engineer"]
+    for hold in holds:
+        swaps[f"hold {hold}"] = engineer_swap(replace(game, hold_rounds=hold), n, CORES, make)
+        _write(path, report)
+    print(f"\n### Engineer against archer, by rounds to hold\n\n{_table(swaps)}", flush=True)
 
-    played = styles(game, n, CORES)
-    print(f"\n### Styles, {game.hold_rounds} rounds to hold\n\n{_table(played)}")
+    if free is None:
+        report["styles"] = styles(game, n, CORES)
+        _write(path, report)
+        print(f"\n### Styles, {game.hold_rounds} rounds to hold\n\n{_table(report['styles'])}")
+    else:
+        own = own_picks(game, free, make, n, CORES)
+        report["own_picks"] = own
+        _write(path, report)
+        print(f"\n### Its own picks, {game.hold_rounds} rounds to hold\n\n{own['picked']}\n")
+        print(_table({"self-play": own["self_play"], "v default": own["against_default"]}))
+        print(_kinds({"self-play": own["self_play"]}), flush=True)
 
-    fitted = rosters(game, max(n // 10, 1), CORES)
+    fitted = rosters(game, max(n // 10, 1), CORES, make=make)
+    report["rosters"] = fitted
+    _write(path, report)
     top = fitted["scores"]
     print(f"\n### Rosters against {fitted['against']}\n")
     print("Best: " + ", ".join(f"{r} {s:.0%}" for r, s in top[:6]))
     print("Worst: " + ", ".join(f"{r} {s:.0%}" for r, s in top[-4:]))
     print("A slot over a footsoldier, points of 100: " + str(fitted["per_slot"]))
-
-    report: Report = {
-        "starts": n,
-        "hold_rounds": game.hold_rounds,
-        "capture_by": game.capture_by,
-        "max_rounds": game.max_rounds,
-        "self_play": selfplay,
-        "engineer": swaps,
-        "styles": played,
-        "rosters": fitted,
-    }
-    path = f"{prefix}_rules.json"
-    with open(path, "w", encoding="utf-8") as out:
-        json.dump(report, out, indent=1)
     print(f"\nWrote {path}, in {(time.perf_counter() - began) / 60:.1f} minutes.")

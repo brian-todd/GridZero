@@ -44,7 +44,7 @@ RoundStarted, Captured, GameOver
 
 Players and matches
 -------------------
-RandomPlayer, GreedyPlayer, SitterPlayer
+RandomPlayer, GreedyPlayer, Fielded, SitterPlayer
     Who picks an action from the legal ones.
 summarize, Summary, balance, Balance, EVAL_SEED, small_rules
     What games show, how fair and lively they were, the boards players are scored on, and rules
@@ -97,7 +97,7 @@ from .events import (
 from .game import Odds, Tactics
 from .lessons import Lessons, lessons_of, positions_of, teach
 from .match import EVAL_SEED, Balance, Summary, balance, small_rules, summarize
-from .players import GreedyPlayer, RandomPlayer, SitterPlayer
+from .players import Fielded, GreedyPlayer, RandomPlayer, SitterPlayer
 from .rules import (
     DEFAULT_CAPS,
     DEFAULT_UNITS,
@@ -130,6 +130,7 @@ __all__ = [
     "Ended",
     "Ending",
     "Event",
+    "Fielded",
     "GameOver",
     "GreedyPlayer",
     "Hold",

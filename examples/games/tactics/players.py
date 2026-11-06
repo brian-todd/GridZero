@@ -14,7 +14,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from gridzero.core import check_int, check_real, hops, sight, snap, steps
-from gridzero.game import Action
+from gridzero.game import Action, Player
 
 from . import objective
 from .board import home_corners
@@ -400,6 +400,47 @@ class _Walks:
             wall[tile] = build
             value += self._lines(wall) - self.lines
         return value
+
+
+@dataclass(frozen=True)
+class Fielded:
+    """Deploys as a greedy player does, then lets another player play.
+
+    For a player that would otherwise choose its own roster, such as a code player, so that rosters
+    can be compared on one way of playing them.
+
+    Parameters
+    ----------
+    play : Player
+        Plays every decision after deployment.
+    deploy : GreedyPlayer, default GreedyPlayer()
+        Deploys, fielding its ``roster``.
+
+    Raises
+    ------
+    TypeError
+        If ``deploy`` is not a `GreedyPlayer`.
+    """
+
+    play: Player[Tactics, TacticsPosition]
+    deploy: GreedyPlayer = field(default_factory=GreedyPlayer)
+
+    def __post_init__(self) -> None:
+        """Check the parameters."""
+        if not isinstance(self.deploy, GreedyPlayer):
+            raise TypeError(f"deploy must be a GreedyPlayer, got {type(self.deploy).__name__}")
+
+    def __call__(
+        self,
+        game: Tactics,
+        player: int,
+        position: TacticsPosition,
+        legal: NDArray[np.bool_],
+        rng: np.random.Generator,
+    ) -> Action:
+        """Return the action of whichever player's part of the game this is (see `Player`)."""
+        by = self.deploy if position.deploying else self.play
+        return by(game, player, position, legal, rng)
 
 
 @dataclass(frozen=True)

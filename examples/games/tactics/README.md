@@ -75,7 +75,7 @@ turn, so a network plays both sides the same way.
 | `tactics.code_games [games] [prefix] [work_plans] [replica] [minutes]` | The search player against itself on 15x15, saved as `{prefix}_lessons.npz` for code players to fit to |
 | `tactics.code_fit <prefix> <lessons...>` | A code player's constants fit to those games, scored on games kept out against simple baselines, and saved as `{prefix}_fit.json`, with what plays as `{prefix}_player.json` |
 | `tactics.code_ladder [weights] [starts] [size] [budgets] [replica] [rivals...]` | The code player against random, greedy or the search player, at equal simulations or equal time, and what a decision costs |
-| `tactics.rules [starts] [prefix] [hold_rounds...]` | How games end, pure styles, the engineer against an archer, and rosters, as tables and `{prefix}_rules.json`, to compare versions of the objective |
+| `tactics.rules [weights] [starts] [prefix] [simulations] [hold_rounds...]` | How games end, the engineer against an archer, rosters, and pure styles (greedy) or the roster it picks (code player), as tables and `{prefix}_rules.json`, to compare versions of the objective or players |
 | `tactics.watch [start] [prefix] [players...]` | One game, decision by decision, in a window or a GIF (random, greedy, sitter, search) |
 | `tactics.zero_scratch <minutes> [prefix] ...` | AlphaZero on a 15x15 board, from scratch or after imitating greedy, in a time box, with endings, picks and work by generation |
 | `tactics.zero_check <weights> [starts] [simulations] [rivals...]` | The AlphaZero player on saved weights against the network alone, greedy or search |
@@ -189,6 +189,37 @@ decision on 15x15. So the code player clearly beats greedy, matches its teacher 
 a third of the time, and on the board it never saw does at least as well: 111-81 together, where 50 simulations
 a turn spread the teacher thin. It is flat past about 128 simulations. All of this is against a teacher at 50
 simulations; a stronger one has not been tried.
+
+**What the rules look like to the three players** (2026-11-06, 25x25, `tactics.rules`, and matches on starts
+of their own). Greedy, the code player at 128 simulations and the search player at 50 agree on most of it, though they
+aren't independent: the code player is fit to the search player, which rolls out with greedy, and all three deploy
+as greedy does in these rosters.
+
+| Reading, on the default rules | Greedy | Code player | Search player |
+|---|---|---|---|
+| Won by holding the point, of games (hold 5) | 46% | 53% | 38% |
+| First capturer won (hold 5) | 67% | 65% | 67% |
+| Team 0's share of decided games | 44% (960 games) | 49% (768) | 49% (96) |
+| Tiles built a game | 0.0 | 7.0 | 7.3 |
+| Knights lost, of those placed (hold 5) | 100% | 99% | 100% |
+| Second knight for a footsoldier, v default | 331-149 | 118-74 | 63-33 |
+| Knight for the engineer, v default | 329-151 | 126-66 | |
+| Footsoldier for the knight, v default | 150-330 | 56-136 | |
+| Archer for the engineer, v default, all hold lengths | 497-463 | 409-359 | 45-51 (hold 5) |
+| The code player's own pick, 5/0/2/1/0, v default | 281-199 | 99-93 | 54-42 |
+
+- **Hold length:** for greedy and the code player, 5 is the only length tried near an even split of holding and
+  killing. At 4 holds win about 70%, at 6 about 20%, at 8 almost none. The search player played only 5.
+- **Seats:** greedy leans to team 1 (3.6 sigma from even), the two better players don't, though the gap between
+  greedy and the code player is only about 2 sigma. No reason yet to change a rule.
+- **Knights are what a roster is about:** a slot over a footsoldier is worth 15-19 points of 100 for a knight and 18
+  for the captain, 2-3 for an archer or an engineer, for both players that played every roster. Greedy's default roster
+  gives up about 10 to 20 points of 100 by fielding one knight. Knights nearly always die, and pay for it: 5 damage
+  each a game, against 3 to 4 for others.
+- **The engineer is about an archer,** perhaps a little less, even played by those who build.
+- **Its own pick:** free to choose, the code player always fields 5 footsoldiers, 2 knights and a captain, no archers
+  or engineers, so no shots or tiles in self-play, and deploys them itself in the 99-93 above. This probably follows
+  its value's weight on hit points, not tested, and does no harm, perhaps through the second knight.
 
 **Under earlier rules** (twelve fixed units, no point, hit points at the round cap), kept for the
 history of the agents:

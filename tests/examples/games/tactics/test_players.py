@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from examples.games.tactics import (
+    Fielded,
     GameOver,
     GreedyPlayer,
     Hold,
@@ -16,8 +17,8 @@ from examples.games.tactics import (
 )
 from examples.games.tactics.board import home_corners
 from gridzero.core import steps
-from gridzero.game import play, series
-from tactics_demo import ARCHER, CAPTAIN, FOOT, KNIGHT, SMALL, TINY, piece, play_random
+from gridzero.game import play, replay, series
+from tactics_demo import ARCHER, CAPTAIN, FOOT, KNIGHT, SMALL, TINY, WORKS, piece, play_random
 
 GREEDY = GreedyPlayer()
 
@@ -270,3 +271,23 @@ def test_greedy_deploys_knights_footsoldiers_the_captain_then_archers():
             kinds.append(verb - Verb.PLACE)
         position = TINY.step(position, (verb, cell))
     assert kinds == [KNIGHT, FOOT, FOOT, CAPTAIN, ARCHER]
+
+
+def test_fielded_deploys_the_greedy_roster_then_only_the_other_player_plays():
+    decided = []
+
+    def play(game, player, position, legal, rng):
+        decided.append(position.deploying)
+        return RandomPlayer()(game, player, position, legal, rng)
+
+    fielded = Fielded(play, GreedyPlayer(roster=(0, 2, 1, 1, 1)))
+    record = series(WORKS, [("a", fielded), ("b", fielded)], 1)[0]
+    assert decided
+    assert not any(decided)
+    units = next(p for p in replay(WORKS, record) if not p.deploying).state.units
+    assert np.bincount(units.kind[units.kind >= 0], minlength=5).tolist() == [0, 4, 2, 2, 2]
+
+
+def test_fielded_refuses_a_deployer_that_is_not_greedy():
+    with pytest.raises(TypeError, match="deploy"):
+        Fielded(RandomPlayer(), RandomPlayer())  # ty: ignore[invalid-argument-type]  (the check)
