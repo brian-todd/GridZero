@@ -35,10 +35,10 @@ def test_self_play_against_greedy_reports_and_trains():
 
 
 def test_games_at_the_round_cap_show_in_their_final_positions():
-    game = dataclasses.replace(TINY, max_rounds=1)  # no game ends in one round
+    game = dataclasses.replace(TINY, max_rounds=1, capture_by=1)  # no game ends sooner
     (it,) = self_play(net(), game, PPO(games=2, epochs=1), iterations=1, seed=0)
     assert capped(it.played) == 2
-    assert it.draws == 2  # TINY draws at the cap
+    assert it.draws == 0  # the game has none
 
 
 def test_greedy_beats_an_untrained_network_outright():

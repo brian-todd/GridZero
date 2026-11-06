@@ -7,17 +7,20 @@ would call `Tactics.observe` on it. Players are frozen dataclasses whose fields 
 parameters, like the rules, so they can be varied too.
 """
 
-from dataclasses import dataclass
+import functools
+from dataclasses import dataclass, field
 
 import numpy as np
 from numpy.typing import NDArray
 
-from gridzero.core import check_real, hops, sight, snap, steps
+from gridzero.core import check_int, check_real, hops, sight, snap, steps
 from gridzero.game import Action
 
+from . import objective
 from .board import home_corners
 from .game import Tactics
-from .state import TacticsPosition, Verb
+from .rules import default_roster
+from .state import TacticsPosition, TacticsState, Verb
 
 
 @dataclass(frozen=True)
@@ -67,17 +70,21 @@ class GreedyPlayer:
 
     On its turn a unit attacks the target of most value now, unless a move first would let it
     attack better; otherwise it moves to the tile that scores best, then defers its attack
-    onto the open tile nearest an enemy if it is an archer, turns to face the nearest enemy,
-    and ends its turn. It moves once per turn, before or after attacking. The value of an
-    attack is its chance to hit times the damage, plus a bonus for a kill worth the target's
-    hit points and Atk. A tile scores by how close it is to the nearest enemy (archers want to
+    if it is an archer (onto the point if an enemy could walk onto it, else onto the open tile
+    nearest an enemy), turns to face the nearest enemy, and ends its turn. It moves once per
+    turn, before or after attacking. The value of an attack is its chance to hit times the damage,
+    plus a bonus for a kill worth the target's hit points and Atk. An engineer works on an adjacent
+    tile instead when that is worth more than attacking: how much the change would delay enemies'
+    walks to the point against friends', and the lines of fire it opens for friends and cuts for
+    enemies. A tile scores by how close it is to the nearest enemy (archers want to
     stand at their range), the Atk of the enemies that could reach and attack it next round,
-    friends beside footsoldiers, and friends in a captain's aura. The nearest enemy is the
+    friends beside footsoldiers, friends in a captain's aura, and the walk to the point, if its
+    side doesn't own it and no friend stands there (`objective.wanted`). The nearest enemy is the
     nearest by a walk around walls and rubble (units aside), and threats count steps on the open
     board, ignoring walls.
 
-    In deployment it places knights and footsoldiers nearest the enemy, then the captain a row
-    behind, then the archers a row further.
+    In deployment it fields ``roster``, placing knights and footsoldiers nearest the enemy, then
+    the captain a row behind, then the ranged units a row further.
 
     Parameters
     ----------
@@ -93,11 +100,21 @@ class GreedyPlayer:
         Weight of each friend that would give a footsoldier its formation bonus.
     aura : float, default 0.3
         Weight of each friend in a captain's aura, or of standing in a friendly aura.
+    point : float, default 1.0
+        Weight of each step closer to the point. At 0 it ignores the objective: a pure fighter.
+    work : float, default 1.0
+        Weight of each step of delay, or line of fire, a change of terrain gives its side. At 0
+        it never builds or breaks.
+    roster : tuple of int, optional
+        How many of each kind to field. By default `rules.default_roster` of the game's caps. A
+        roster that doesn't fill the team under the rules is clipped: past it, the next legal
+        kind by rank.
 
     Raises
     ------
     TypeError, ValueError
-        If a weight is not a finite real number.
+        If a weight is not a finite real number, or ``roster`` is not a tuple of non-negative
+        integers.
     """
 
     attack: float = 1.0
@@ -106,10 +123,18 @@ class GreedyPlayer:
     advance: float = 0.5
     formation: float = 0.3
     aura: float = 0.3
+    point: float = 1.0
+    work: float = 1.0
+    roster: tuple[int, ...] | None = None
 
     def __post_init__(self) -> None:
-        for name in ("attack", "kill", "risk", "advance", "formation", "aura"):
+        for name in ("attack", "kill", "risk", "advance", "formation", "aura", "point", "work"):
             check_real(getattr(self, name), name)
+        if self.roster is not None:
+            if not isinstance(self.roster, tuple):
+                raise TypeError(f"roster must be a tuple of ints, got {self.roster!r}")
+            for count in self.roster:
+                check_int(count, "each roster entry", minimum=0)
 
     def __call__(
         self,
@@ -132,10 +157,17 @@ class GreedyPlayer:
         legal: NDArray[np.bool_],
         rng: np.random.Generator,
     ) -> Action:
-        """Place the next kind in order, in the row its kind belongs to."""
-        space = position.state.space
-        left = [k for k in range(len(game.units)) if legal[Verb.PLACE + k].any()]
-        kind = min(left, key=lambda k: _deploy_rank(game, k))
+        """Place the roster's next kind in order, in the row its kind belongs to."""
+        state = position.state
+        space = state.space
+        roster = self.roster or default_roster(game.caps, game.team_size)
+        kinds = range(len(game.units))
+        placed = [
+            np.count_nonzero((state.units.kind == k) & (state.units.team == player)) for k in kinds
+        ]
+        legal_kinds = [k for k in kinds if legal[Verb.PLACE + k].any()]
+        wanted = [k for k in legal_kinds if k < len(roster) and placed[k] < roster[k]]
+        kind = min(wanted or legal_kinds, key=lambda k: _deploy_rank(game, k))
         stats = game.units[kind]
         row = 2 if stats.reach > 1 else 1 if stats.aura else 0
         cells = np.flatnonzero(legal[Verb.PLACE + kind])
@@ -164,11 +196,14 @@ class GreedyPlayer:
             total = score + np.where(np.isfinite(attacks), attacks, 0.0)
             i = _argmax(total, rng)
             best, best_attack = int(cells[i]), attacks[i]
-        if now_target >= 0 and now_value >= best_attack:
+        work_value, work = self._best_work(game, position, legal, a)
+        if now_target >= 0 and now_value >= best_attack and now_value >= work_value:
             return Action(Verb.ATTACK, now_target)
+        if work is not None and work_value >= best_attack:
+            return work
         if best != a:
             return Action(Verb.MOVE, best)
-        return self._wrap_up(game, position, legal, rng)
+        return self._wrap_up(game, position, legal, work, rng)
 
     def _moves(
         self, game: Tactics, position: TacticsPosition, legal: NDArray[np.bool_], a: int
@@ -201,16 +236,23 @@ class GreedyPlayer:
         game: Tactics,
         position: TacticsPosition,
         legal: NDArray[np.bool_],
+        work: Action | None,
         rng: np.random.Generator,
     ) -> Action:
-        """End a turn: defer onto the open tile nearest an enemy, face the nearest enemy, end."""
+        """End a turn: ``work`` if any, defer as the class says, face an enemy, end."""
         state = position.state
         u = state.units
         a = game.active(position)
+        if work is not None:
+            return work
         xy = state.space.coords
         enemies = np.flatnonzero(state.occupied & (u.team != u.team[a]))
         if legal[Verb.DEFER].any() and enemies.size:
             tiles = np.flatnonzero(legal[Verb.DEFER])
+            for tile in tiles[state.point[tiles] & ~state.occupied[tiles]]:
+                walk = [_walk_range(game, int(k)) for k in u.kind[enemies]]
+                if (hops(state.space, enemies, tile) <= walk).any():
+                    return Action(Verb.DEFER, int(tile))
             nearest = hops(state.space, tiles[:, None], enemies).min(axis=1).astype(np.float64)
             return Action(Verb.DEFER, int(tiles[_argmax(-nearest, rng)]))
         if enemies.size:
@@ -219,6 +261,23 @@ class GreedyPlayer:
             if legal[Verb.FACE + d, a]:
                 return Action(Verb.FACE + d, a)
         return Action(Verb.END, a)
+
+    def _best_work(
+        self, game: Tactics, position: TacticsPosition, legal: NDArray[np.bool_], a: int
+    ) -> tuple[float, Action | None]:
+        """Return the value of the best change of terrain and its action, if any is worth doing."""
+        if self.work == 0 or not (legal[Verb.BUILD].any() or legal[Verb.BREAK].any()):
+            return -np.inf, None
+        state = position.state
+        team = int(state.units.team[a])
+        walks = _Walks(game, state, team)
+        best, action = 0.0, None
+        for verb in (Verb.BUILD, Verb.BREAK):
+            for tile in np.flatnonzero(legal[verb]):
+                value = self.work * walks.gain(int(tile), verb == Verb.BUILD)
+                if value > best:
+                    best, action = value, Action(verb, int(tile))
+        return (best, action) if action is not None else (-np.inf, None)
 
     def _best_attack(
         self, game: Tactics, position: TacticsPosition, a: int, at: int, targets: object
@@ -273,7 +332,115 @@ class GreedyPlayer:
             else:
                 givers = np.array([game.units[k].aura for k in u.kind[friends]])
                 score += self.aura * ((dist <= game.aura_radius) & givers).any(axis=1)
+        if self.point != 0:
+            tiles = objective.wanted(state.point, position.hold, u.team, int(team), a)
+            if tiles.size:
+                score -= self.point * steps(state.space, tiles, blocked=~state.passable)[cells]
         return score
+
+
+class _Walks:
+    """What a side gains from changing a tile: delays to walks, and lines of fire."""
+
+    def __init__(self, game: Tactics, state: TacticsState, team: int) -> None:
+        self.game, self.state, self.team = game, state, team
+        self.space = state.space
+        u = state.units
+        self.point = np.flatnonzero(state.point)
+        self.friends = np.flatnonzero(state.occupied & (u.team == team))
+        self.enemies = np.flatnonzero(state.occupied & (u.team != team))
+        self.blocked = ~state.passable
+
+    @functools.cached_property
+    def walks(self) -> float:
+        """The side's lead in steps to the point, as things stand."""
+        return self._walks(self.blocked)
+
+    @functools.cached_property
+    def lines(self) -> int:
+        """The side's lead in lines of fire, as things stand."""
+        return self._lines(self.state.wall)
+
+    def _walks(self, blocked: NDArray[np.bool_]) -> float:
+        """Return the enemies' steps to the point, summed, minus the friends'."""
+        if not self.point.size:
+            return 0.0
+        distance = steps(self.space, self.point, blocked=blocked)
+        return float(distance[self.enemies].sum() - distance[self.friends].sum())
+
+    def _lines(self, wall: NDArray[np.bool_]) -> int:
+        """Return the friends' lines of fire on enemies minus the enemies' on friends."""
+        return self._fire(wall, self.friends, self.enemies) - self._fire(
+            wall, self.enemies, self.friends
+        )
+
+    def _fire(
+        self, wall: NDArray[np.bool_], shooters: NDArray[np.intp], targets: NDArray[np.intp]
+    ) -> int:
+        """Return how many (ranged shooter, target) pairs see each other within reach."""
+        kinds = self.state.units.kind
+        total = 0
+        for k, stats in enumerate(self.game.units):
+            cells = shooters[kinds[shooters] == k]
+            if stats.reach > 1 and cells.size and targets.size:
+                seen = sight(self.space, cells, wall, stats.reach, separate=True)
+                total += int(np.count_nonzero(seen[:, targets]))
+        return total
+
+    def gain(self, tile: int, build: bool) -> float:
+        """Return what moving ``tile`` one step of the ladder is worth to the side."""
+        state = self.state
+        value = 0.0
+        if state.passable[tile] or (state.rubble[tile] and not build):
+            blocked = self.blocked.copy()
+            blocked[tile] = build
+            value += self._walks(blocked) - self.walks
+        if state.wall[tile] or (state.rubble[tile] and build):
+            wall = state.wall.copy()
+            wall[tile] = build
+            value += self._lines(wall) - self.lines
+        return value
+
+
+@dataclass(frozen=True)
+class SitterPlayer:
+    """Deploys as greedy does, then never moves: it strikes what comes in reach and ends its turn.
+
+    A yardstick for the objective: turtling should lose.
+
+    Parameters
+    ----------
+    greedy : GreedyPlayer, default GreedyPlayer()
+        Deploys, and chooses between targets.
+
+    Raises
+    ------
+    TypeError
+        If ``greedy`` is not a `GreedyPlayer`.
+    """
+
+    greedy: GreedyPlayer = field(default_factory=GreedyPlayer)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.greedy, GreedyPlayer):
+            raise TypeError(f"greedy must be a GreedyPlayer, got {type(self.greedy).__name__}")
+
+    def __call__(
+        self,
+        game: Tactics,
+        player: int,
+        position: TacticsPosition,
+        legal: NDArray[np.bool_],
+        rng: np.random.Generator,
+    ) -> Action:
+        """Return its deployment, its best attack, or the end of its turn (see `game.Player`)."""
+        if position.deploying:
+            return self.greedy(game, player, position, legal, rng)
+        a = game.active(position)
+        if legal[Verb.ATTACK].any():
+            targets = np.flatnonzero(legal[Verb.ATTACK])
+            return Action(Verb.ATTACK, self.greedy._best_attack(game, position, a, a, targets)[1])
+        return Action(Verb.END, a)
 
 
 def _deploy_rank(game: Tactics, kind: int) -> tuple[bool, bool, int, int]:
@@ -282,10 +449,15 @@ def _deploy_rank(game: Tactics, kind: int) -> tuple[bool, bool, int, int]:
     return (stats.reach > 1, stats.aura, -stats.hp, kind)
 
 
+def _walk_range(game: Tactics, kind: int) -> int:
+    """Return how far a unit of ``kind`` can walk in a turn."""
+    stats = game.units[kind]
+    return (2 if stats.double_move else 1) * stats.move
+
+
 def _threat_range(game: Tactics, kind: int) -> int:
     """Return how far a unit of ``kind`` can strike from in a turn: its movement plus reach."""
-    stats = game.units[kind]
-    return (2 if stats.double_move else 1) * stats.move + int(stats.reach)
+    return _walk_range(game, kind) + int(game.units[kind].reach)
 
 
 def _argmax(score: NDArray[np.float64], rng: np.random.Generator) -> int:

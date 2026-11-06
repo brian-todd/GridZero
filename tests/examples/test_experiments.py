@@ -172,6 +172,16 @@ def test_search(capsys):
     assert "Check: search beats greedy at 1 simulations:" in out
 
 
+@pytest.mark.slow
+def test_rules(capsys, tmp_path):
+    out = ran(capsys, "tactics.rules", 1, tmp_path / "rules", 5)
+    assert "### Styles, 5 rounds to hold" in out
+    report = json.loads((tmp_path / "rules_rules.json").read_text())
+    assert set(report["self_play"]) == {"hold 5"}
+    assert "seeker v sitter" in report["styles"]
+    assert report["rosters"]["scores"]
+
+
 def test_zero_check(capsys, weights):
     out = ran(capsys, "tactics.zero_check", weights["tactics"], 1, 2, "net")
     assert "Against net: " in out

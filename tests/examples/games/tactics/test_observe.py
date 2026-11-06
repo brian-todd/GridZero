@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from agents_demo import check_learnable
-from examples.games.tactics import Action, RandomPlayer, Verb
+from examples.games.tactics import Action, Hold, RandomPlayer, Verb
 from game_demo import check_game
 from tactics_demo import ARCHER, CAPTAIN, FOOT, KNIGHT, SMALL, TINY, mirrored, piece, play_random
 
@@ -15,11 +15,22 @@ def test_observations_have_one_float_plane_per_name_in_zero_to_one():
     position = TINY.start(1)
     obs = TINY.observe(position, 0)
     names = TINY.planes
-    assert len(names) == len(set(names)) == 4 + 3 * 4 + 1 + 6 + 5 + 3 + 2
+    assert len(names) == len(set(names)) == 4 + 3 * 4 + 1 + 6 + 5 + 3 + 2 + 1 + 4 + 1
     assert obs.shape == (len(names), 81)
     assert obs.dtype == np.float32
     assert obs.min() >= 0
     assert obs.max() <= 1
+
+
+def test_to_place_counts_a_team_down_for_each_side_and_is_zero_in_battle(make_battle):
+    position = TINY.start(1)
+    home = np.flatnonzero(TINY.legal(position)[Verb.PLACE + FOOT])
+    after = TINY.step(position, (Verb.PLACE + FOOT, int(home[0])))
+    assert plane(TINY, TINY.observe(after, 0), "to place") == pytest.approx(np.full(81, 4 / 5))
+    assert (plane(TINY, TINY.observe(after, 1), "to place") == 1).all()
+    assert (
+        plane(SMALL, SMALL.observe(make_battle([piece(1, 1, FOOT, 0)]), 0), "to place") == 0
+    ).all()
 
 
 def test_units_are_own_or_enemy_with_their_hit_points_and_facing(make_battle, at):
@@ -58,11 +69,27 @@ def test_scalars_fill_their_planes():
     assert (plane(TINY, obs, "deploying") == 1).all()
     assert (plane(TINY, obs, "round") == 0).all()
     assert (plane(TINY, obs, "to deploy captain") == 1).all()
+    assert (plane(TINY, obs, "to place") == 1).all()
     cell = int(np.flatnonzero(TINY.legal(position)[Verb.PLACE + FOOT])[0])
     after = TINY.step(position, (Verb.PLACE + FOOT, cell))
     assert (plane(TINY, TINY.observe(after, 0), "to deploy footsoldier") == 0.5).all()
     assert (plane(TINY, TINY.observe(after, 1), "to deploy footsoldier") == 1).all()
     assert (plane(TINY, TINY.observe(after, 1), "active") == 0).all()
+
+
+def test_nothing_is_left_to_deploy_in_battle_or_once_a_team_is_full(make_battle):
+    names = [f"to deploy {stats.name}" for stats in TINY.units]
+    battle = TINY.observe(make_battle([piece(1, 1, FOOT, 0)]), 0)
+    assert all((plane(TINY, battle, name) == 0).all() for name in names)
+    position = TINY.start(1)
+    while np.count_nonzero(position.state.occupied) < 2 * TINY.team_size - 1:
+        legal = TINY.legal(position)
+        verb, cell = np.argwhere(legal)[0]
+        position = TINY.step(position, (int(verb), int(cell)))
+    assert position.deploying
+    full = TINY.observe(position, 0)  # team 0 has placed all its team, and team 1 has one to go
+    assert all((plane(TINY, full, name) == 0).all() for name in names)
+    assert any((plane(TINY, TINY.observe(position, 1), name) > 0).all() for name in names)
 
 
 def test_team_one_sees_the_board_turned_with_itself_as_own(make_battle, at):
@@ -75,7 +102,15 @@ def test_team_one_sees_the_board_turned_with_itself_as_own(make_battle, at):
     np.testing.assert_array_equal(own_home, position.state.home == 0)  # always team 0's corner
 
 
-def test_a_mirrored_position_looks_the_same_to_the_other_team():
+def test_each_side_is_told_whether_it_loses_at_the_deadline(make_battle):
+    # The frame hides the seat, and only the deadline tells the seats apart: without this plane
+    # a network can't tell whether waiting wins or loses.
+    position = make_battle([piece(1, 1, FOOT, 0), piece(7, 7, FOOT, 1)])
+    assert (plane(SMALL, SMALL.observe(position, 0), "loses the deadline") == 0).all()
+    assert (plane(SMALL, SMALL.observe(position, 1), "loses the deadline") == 1).all()
+
+
+def test_a_mirrored_position_looks_the_same_to_the_other_team_but_for_the_seat():
     checked = 0
     rng = np.random.default_rng(3)
     for position, _ in play_random(TINY, 3, rng):
@@ -83,11 +118,37 @@ def test_a_mirrored_position_looks_the_same_to_the_other_team():
             continue
         flipped = mirrored(TINY, position)
         for team in (0, 1):
+            same = [k for k, name in enumerate(TINY.planes) if name != "loses the deadline"]
             np.testing.assert_array_equal(
-                TINY.observe(flipped, 1 - team), TINY.observe(position, team)
+                TINY.observe(flipped, 1 - team)[same], TINY.observe(position, team)[same]
             )
         checked += 1
     assert checked > 10
+
+
+@pytest.mark.parametrize(("owner", "own", "enemy"), [(-1, 0, 0), (0, 1, 0), (1, 0, 1)])
+def test_the_point_and_who_owns_it_are_planes_seen_from_team_zero(
+    make_battle, at, owner, own, enemy
+):
+    hold = Hold(owner, 2 if owner >= 0 else 0)
+    obs = SMALL.observe(make_battle([piece(1, 1, FOOT, 0)], point=(4, 4), hold=hold), 0)
+    assert np.flatnonzero(plane(SMALL, obs, "point")).tolist() == [at(4, 4)]
+    assert (plane(SMALL, obs, "own point") == own).all()
+    assert (plane(SMALL, obs, "enemy point") == enemy).all()
+    assert plane(SMALL, obs, "clock") == pytest.approx(np.full(81, hold.clock / 5))
+
+
+def test_team_one_sees_the_point_in_its_own_frame_and_ownership_as_its_own(make_battle, at):
+    position = make_battle([piece(1, 1, FOOT, 0)], point=(2, 3), hold=Hold(1, 1))
+    obs = SMALL.observe(position, 1)
+    assert np.flatnonzero(plane(SMALL, obs, "point")).tolist() == [at(6, 5)]
+    assert (plane(SMALL, obs, "own point") == 1).all()
+    assert (plane(SMALL, obs, "enemy point") == 0).all()
+
+
+def test_the_clock_plane_stops_at_one(make_battle):
+    position = make_battle([piece(1, 1, FOOT, 0)], hold=Hold(0, 50))
+    assert (plane(SMALL, SMALL.observe(position, 0), "clock") == 1).all()
 
 
 def test_team_must_be_zero_or_one(not_an_integer):

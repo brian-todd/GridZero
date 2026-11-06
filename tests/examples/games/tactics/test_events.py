@@ -5,10 +5,12 @@ import pytest
 
 from examples.games.tactics import (
     Attacked,
+    Captured,
     Deferred,
     Died,
     Ended,
     GameOver,
+    Hold,
     Moved,
     Placed,
     RoundStarted,
@@ -79,7 +81,7 @@ def test_a_kill_records_the_death_and_the_last_one_the_end(make_battle, at):
     assert attack.hit
     assert attack.damage == 2  # at most what it had
     assert died == Died(1, ARCHER, 1, at(4, 4))
-    assert over == GameOver(0)
+    assert over == GameOver(0, "killed")
 
 
 def test_a_deferred_attack_splits_the_move_around_it(make_battle, at):
@@ -113,11 +115,28 @@ def test_the_last_turn_of_a_round_starts_the_next(make_battle, at):
     assert after.events == (Ended(0), RoundStarted(2))
 
 
-def test_a_draw_is_recorded_as_a_game_over_without_a_winner(make_battle, at):
-    game = dataclasses.replace(SMALL, max_rounds=1)
-    position = make_battle([piece(4, 4, FOOT, 0), piece(8, 8, FOOT, 1, done=True)], game=game)
+def test_the_last_round_is_recorded_as_a_game_over_for_the_owner(make_battle, at):
+    game = dataclasses.replace(SMALL, max_rounds=1, capture_by=1)
+    pieces = [piece(4, 4, FOOT, 0), piece(8, 8, FOOT, 1, done=True)]
+    position = make_battle(pieces, game=game, hold=Hold(1, 1))
     after = take(game, position, Verb.END, at(4, 4))
-    assert after.events == (Ended(0), GameOver(None))
+    assert after.events == (Ended(0), GameOver(1, "cap"))
+
+
+def test_a_capture_and_a_flip_are_recorded_at_the_round_end(make_battle, at):
+    pieces = [piece(4, 4, FOOT, 0), piece(8, 8, FOOT, 1, done=True)]
+    first = make_battle(pieces, point=(4, 4))
+    assert take(SMALL, first, Verb.END, at(4, 4)).events == (
+        Ended(0),
+        Captured(0, 1, False),
+        RoundStarted(2),
+    )
+    flip = make_battle(pieces, point=(4, 4), hold=Hold(1, 3))
+    assert take(SMALL, flip, Verb.END, at(4, 4)).events == (
+        Ended(0),
+        Captured(0, 1, True),
+        RoundStarted(2),
+    )
 
 
 def test_a_position_holds_only_the_events_of_its_own_step(make_battle, at):

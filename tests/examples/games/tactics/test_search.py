@@ -4,19 +4,34 @@ import numpy as np
 import pytest
 
 from examples.games.tactics import (
+    Action,
     Died,
     Ended,
     GreedyPlayer,
+    Hold,
     Placed,
     Plan,
     SearchPlayer,
     Verb,
     material,
+    standing,
 )
 from examples.games.tactics.search import _Node
 from gridzero.core import steps
 from gridzero.game import play
-from tactics_demo import ARCHER, CAPTAIN, FOOT, SMALL, TINY, mirrored, piece, play_random
+from tactics_demo import (
+    ARCHER,
+    CAPTAIN,
+    ENGINEER,
+    FOOT,
+    KNIGHT,
+    SMALL,
+    TINY,
+    WORKS,
+    mirrored,
+    piece,
+    play_random,
+)
 
 QUICK = SearchPlayer(simulations=12, plans=4, depth=3, rollout_turns=0)
 """A small search, without rollouts, for tests of behavior rather than strength."""
@@ -203,6 +218,41 @@ def test_search_parameters_are_checked(not_an_integer):
         SearchPlayer(greedy="greedy")  # ty: ignore[invalid-argument-type]
 
 
+def test_standing_blends_material_and_the_clock(make_battle):
+    pieces = [piece(1, 1, FOOT, 0), piece(7, 7, FOOT, 1)]
+    even = make_battle(pieces)
+    assert standing(SMALL, even, 0.5) == pytest.approx(0.5)
+    assert standing(SMALL, make_battle(pieces, hold=Hold(0, 5)), 1.0) == pytest.approx(1.0)
+    assert standing(SMALL, make_battle(pieces, hold=Hold(1, 5)), 1.0) == pytest.approx(0.0)
+    assert standing(SMALL, make_battle(pieces, hold=Hold(0, 1)), 1.0) == pytest.approx(0.6)
+    assert standing(SMALL, make_battle(pieces, hold=Hold(1, 1)), 1.0) == pytest.approx(0.4)
+    assert standing(SMALL, make_battle(pieces, hold=Hold(0, 50)), 1.0) == pytest.approx(1.0)
+    ahead = make_battle([piece(1, 1, FOOT, 0), piece(7, 7, FOOT, 1, hp=1)], hold=Hold(1, 5))
+    assert standing(SMALL, ahead, 0.0) == material(SMALL, ahead) > 0.5
+
+
+def test_the_search_values_a_position_by_its_standing_after_the_rollout(make_battle):
+    pieces = [piece(1, 1, FOOT, 0), piece(7, 7, FOOT, 1)]
+    position = make_battle(pieces, hold=Hold(0, 4))
+    value = QUICK._evaluate(SMALL, position, np.random.default_rng(0))
+    assert value == standing(SMALL, position, QUICK.hold_weight) > material(SMALL, position)
+
+
+def test_the_search_rejects_a_hold_weight_outside_zero_to_one():
+    with pytest.raises(ValueError, match="hold_weight"):
+        SearchPlayer(hold_weight=1.5)
+
+
+def test_a_search_that_values_the_clock_walks_a_unit_onto_the_point_to_stop_it(make_battle, at):
+    # Team 1 is one round from winning. Standing on the point keeps it from winning, and only a
+    # search that reads the clock or the end of the game tells that apart from any other tile.
+    pieces = [piece(4, 3, KNIGHT, 0), piece(8, 8, FOOT, 1, done=True)]
+    position = make_battle(pieces, point=(4, 4), hold=Hold(1, 4))
+    player = SearchPlayer(simulations=30, plans=30, rollout_turns=0)
+    plan = player.search(SMALL, position, np.random.default_rng(0))
+    assert plan.tile == at(4, 4)
+
+
 def counts(n, w, children=()):
     node = _Node(n, w)
     for key, child in children:
@@ -278,3 +328,81 @@ def test_the_player_searches_once_per_turn():
     team = {e.uid: e.team for e in record.events if isinstance(e, Placed)}
     ours = [e for e in record.events if isinstance(e, Ended | Died) and team[e.uid] == 0]
     assert 0 < len(player.plies) <= len(ours)  # a turn ends by its end or its unit's death
+
+
+def test_a_unit_that_builds_gets_plans_to_work_and_others_do_not(make_battle, at):
+    player = SearchPlayer(plans=2, work_plans=3)
+    rng = np.random.default_rng(0)
+    position = make_battle([piece(4, 4, ENGINEER, 0), piece(8, 8, FOOT, 1)], game=WORKS)
+    plans = [p for p, _ in player.candidates(WORKS, position, WORKS.legal(position), rng)]
+    assert len(plans) == 5
+    assert all(p.work is None for p in plans[:2])
+    assert all(p.work is not None for p in plans[2:])
+    archer = make_battle([piece(4, 4, ARCHER, 0), piece(8, 8, FOOT, 1)], game=WORKS)
+    plans = [p for p, _ in player.candidates(WORKS, archer, WORKS.legal(archer), rng)]
+    assert all(p.work is None for p in plans)
+
+
+def test_no_plans_to_work_once_the_attack_is_spent_or_if_none_are_asked_for(make_battle):
+    rng = np.random.default_rng(0)
+    spent = make_battle([piece(4, 4, ENGINEER, 0, attacked=True), piece(8, 8, FOOT, 1)], game=WORKS)
+    plans = SearchPlayer().candidates(WORKS, spent, WORKS.legal(spent), rng)
+    assert all(p.work is None for p, _ in plans)
+    fresh = make_battle([piece(4, 4, ENGINEER, 0), piece(8, 8, FOOT, 1)], game=WORKS)
+    plans = SearchPlayer(work_plans=0).candidates(WORKS, fresh, WORKS.legal(fresh), rng)
+    assert all(p.work is None for p, _ in plans)
+
+
+def test_plans_to_work_never_name_a_unit_the_point_or_the_wrong_step(make_battle, at):
+    pieces = [piece(4, 4, ENGINEER, 0), piece(4, 5, FOOT, 0, done=True), piece(8, 8, FOOT, 1)]
+    position = make_battle(pieces, game=WORKS, walls=[(3, 4)], rubble=[(5, 4)], point=(4, 3))
+    player = SearchPlayer(plans=1, work_plans=100)
+    plans = player.candidates(WORKS, position, WORKS.legal(position), np.random.default_rng(0))
+    work = [p.work for p, _ in plans if p.work is not None]
+    assert work
+    cells = {w.cell for w in work}
+    assert not cells & {at(4, 5), at(4, 3)}
+    state = position.state
+    for w in work:
+        assert w.verb in (Verb.BUILD, Verb.BREAK)
+        if w.verb == Verb.BUILD:
+            assert not state.wall[w.cell]
+        else:
+            assert not state.passable[w.cell]
+
+
+def test_a_plan_to_work_moves_works_and_ends_its_turn(make_battle, at):
+    position = make_battle([piece(4, 4, ENGINEER, 0), piece(8, 8, FOOT, 1)], game=WORKS)
+    plan = Plan(at(4, 5), False, Action(Verb.BUILD, at(5, 5)))
+    rng = np.random.default_rng(0)
+    after = SearchPlayer()._play(WORKS, position, WORKS.legal(position), plan, rng)
+    assert after.state.rubble[at(5, 5)]
+    verbs = [type(e).__name__ for e in after.events]
+    assert "Ended" in verbs or after.round == 2
+
+
+def test_a_plan_to_work_that_is_no_longer_legal_is_skipped(make_battle, at):
+    position = make_battle([piece(4, 4, ENGINEER, 0), piece(8, 8, FOOT, 1)], game=WORKS)
+    plan = Plan(at(4, 4), False, Action(Verb.BREAK, at(4, 5)))  # open ground: nothing to break
+    action = SearchPlayer()._next(
+        WORKS, position, WORKS.legal(position), plan, np.random.default_rng(0)
+    )
+    assert action != plan.work
+
+
+def test_a_search_may_play_a_whole_game_of_engineers():
+    game = dataclasses.replace(WORKS, max_rounds=4, capture_by=4)
+    player = SearchPlayer(simulations=4, plans=3, work_plans=3, depth=2, rollout_turns=0)
+    record = play(game, [player, player], game.start(3))
+    assert record.final.over
+
+
+def test_a_plan_with_nothing_left_to_do_ends_with_the_work_greedy_would_do(make_battle, at):
+    # As in greedy's own test: closing the near gap makes the enemy walk around.
+    walls = [(4, r) for r in range(9) if r not in (4, 0)]
+    pieces = [piece(3, 4, ENGINEER, 0), piece(8, 6, FOOT, 1)]
+    position = make_battle(pieces, game=WORKS, walls=walls, point=(2, 4), hold=Hold(0, 1))
+    legal = WORKS.legal(position)
+    player = SearchPlayer(greedy=GreedyPlayer(risk=0.0))
+    action = player._next(WORKS, position, legal, Plan(at(3, 4), False), np.random.default_rng(0))
+    assert action == Action(Verb.BUILD, at(4, 4))

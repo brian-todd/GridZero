@@ -6,10 +6,12 @@ import pytest
 from examples.games.tactics import (
     Attacked,
     Balance,
+    Captured,
     Died,
     GameOver,
     GreedyPlayer,
     RandomPlayer,
+    RoundStarted,
     SearchPlayer,
     Summary,
     TacticsPosition,
@@ -130,7 +132,7 @@ def test_a_summary_credits_damage_to_each_side_and_kills_to_the_killing_blow():
         attack(3, 5, 1, 1),  # the captain finishes it
         Died(5, 1, 1, 0),
         attack(1, 6, 0, 0),  # an archer misses footsoldier 6
-        GameOver(0),
+        GameOver(0, "killed"),
     )
     final = TacticsPosition(TINY.start(0).state, 0, ply=10, round=3, winner=0, over=True)
     summary = summarize(TINY, [Record(("a", "b"), TINY.start(0), (), final, events)])
@@ -142,19 +144,56 @@ def test_a_summary_credits_damage_to_each_side_and_kills_to_the_killing_blow():
     assert (summary.tally.plies, summary.rounds) == (10, 3)
 
 
-def made_summary(games, team_wins, dealt):
-    """A summary of ``games`` games with the given wins by team and damage dealt by kind."""
+def made_summary(games, team_wins, dealt, caps=TINY.caps):
+    """A summary of ``games`` games with the given wins by team, damage dealt by kind, and the
+    units a side placed by kind."""
     dealt = np.array(dealt, dtype=np.int64)
     zeros = np.zeros_like(dealt)
     seat_wins = np.array(team_wins, dtype=np.int64)
     return Summary(
         tally=Tally(games, {"a": 0, "b": 0}, games - sum(team_wins), seat_wins, 1.0),
         rounds=1.0,
+        endings={},
+        flips=0,
+        first_capturer_won=0,
+        shots=0,
+        shots_hit=0,
+        shots_flanking=0,
+        built=0,
+        broke=0,
+        placed=2 * games * np.array(caps[: dealt.size], dtype=np.int64),
         damage_dealt=dealt,
         damage_taken=zeros,
         kills=zeros,
         losses=zeros,
     )
+
+
+def test_a_summary_counts_deferred_attacks_apart():
+    final = TacticsPosition(TINY.start(0).state, 0, ply=10, round=3, winner=0, over=True)
+    shot = Attacked(0, 1, 0, 5, 0, 0, 12, 10, 3, 2, False, True, 3, deferred=True)
+    events = (
+        shot,
+        shot._replace(hit=False, flank=True),
+        shot._replace(deferred=False),
+        GameOver(0, "killed"),
+    )
+    summary = summarize(TINY, [Record(("a", "b"), TINY.start(0), (), final, events)])
+    assert (summary.shots, summary.shots_hit, summary.shots_flanking) == (2, 1, 1)
+
+
+def test_a_summary_counts_endings_flips_and_first_capturers():
+    final = TacticsPosition(TINY.start(0).state, 0, ply=10, round=3, winner=0, over=True)
+    games = (
+        (Captured(0, 1, False), Captured(1, 2, True), Captured(0, 3, True), GameOver(0, "held")),
+        (Captured(1, 2, False), GameOver(0, "killed")),
+        (RoundStarted(2), GameOver(0, "deadline")),
+    )
+    start = TINY.start(0)
+    summary = summarize(TINY, [Record(("a", "b"), start, (), final, g) for g in games])
+    assert summary.endings == {"killed": 1, "held": 1, "deadline": 1, "cap": 0}
+    assert summary.flips == 2
+    assert summary.first_capturer_won == 1
 
 
 def test_balance_scores_sides_draws_and_damage_per_unit_deployed():
@@ -178,8 +217,8 @@ def test_balance_without_a_decided_game_has_no_edge():
 
 
 def test_balance_leaves_kinds_nobody_deploys_out_of_evenness():
-    game = dataclasses.replace(TINY, counts=(2, 0, 1, 1))
-    scores = balance(game, made_summary(1, [1, 0], [4, 0, 2, 1]))
+    game = dataclasses.replace(TINY, caps=(2, 0, 1, 1), team_size=4)
+    scores = balance(game, made_summary(1, [1, 0], [4, 0, 2, 1], game.caps))
     np.testing.assert_array_equal(scores.impact, [1.0, np.nan, 1.0, 0.5])
     assert scores.evenness == 0.5
 
@@ -202,6 +241,6 @@ def test_balance_of_played_games_agrees_with_their_summary():
     summary = summarize(TINY, records)
     scores = balance(TINY, summary)
     assert scores.fairness.decided == 4 - summary.tally.draws
-    deployed = 2 * 4 * np.array(TINY.counts)
-    np.testing.assert_array_equal(scores.impact, summary.damage_dealt / deployed)
+    np.testing.assert_array_equal(summary.placed, 2 * 4 * np.array(TINY.caps))
+    np.testing.assert_array_equal(scores.impact, summary.damage_dealt / summary.placed)
     assert scores.evenness == scores.impact.min() / scores.impact.max()

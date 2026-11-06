@@ -7,14 +7,14 @@ from examples.games.tactics import (
     homes,
     make_board,
 )
-from examples.games.tactics.board import home_corners
+from examples.games.tactics.board import center_cell, home_corners, rings
 from game_demo import is_symmetric
-from gridzero.core import regions, steps
+from gridzero.core import hops, regions, steps
 
 
 @pytest.fixture(scope="module")
 def board():
-    return make_board((32, 32), seed=7)
+    return make_board((33, 33), seed=7)
 
 
 def test_board_space_is_a_shared_hex_lattice_that_does_not_wrap():
@@ -75,10 +75,10 @@ def test_board_homes_are_clear_and_every_open_tile_is_reachable(board):
 
 def test_crowded_boards_join_their_homes_and_close_every_pocket():
     # Many walls on a small board: pockets to close, and draws whose homes are cut off.
-    space = board_space((12, 12))
+    space = board_space((13, 13))
     a, b = home_corners(space)
     for seed in range(40):
-        board = make_board((12, 12), seed=seed, walls=0.3, rubble=0.0, home_depth=3)
+        board = make_board((13, 13), seed=seed, walls=0.3, rubble=0.0, home_depth=3)
         pieces = regions(space, board.passable)
         assert pieces.max() == 0, seed
         assert pieces[a] == pieces[b] == 0
@@ -92,13 +92,31 @@ def test_board_has_about_the_shares_of_walls_and_rubble_asked_for(board):
     assert not (board.wall & board.rubble).any()
 
 
+def test_the_point_is_the_center_and_it_and_the_tiles_around_it_start_clear():
+    for seed in range(20):
+        board = make_board((13, 13), seed=seed, walls=0.3, rubble=0.1, home_depth=3)
+        center = int(board.space.ravel([6, 6]))
+        assert np.flatnonzero(board.point).tolist() == [center]
+        around = board.space.radius_graph(1.0)
+        ring = around.indices[around.indptr[center] : around.indptr[center + 1]]
+        assert ring.size == 6
+        assert board.passable[ring].all()
+        assert board.passable[center]
+
+
+def test_a_board_needs_odd_lengths_to_have_a_center():
+    with pytest.raises(ValueError, match="odd"):
+        make_board((12, 13), seed=0, home_depth=3)
+    assert center_cell(board_space((5, 7))) == board_space((5, 7)).ravel([2, 3])
+
+
 def test_board_has_no_units(board):
     assert not board.occupied.any()
 
 
 def test_same_seed_gives_the_same_board_and_another_seed_another(board):
-    again = make_board((32, 32), seed=7)
-    other = make_board((32, 32), seed=8)
+    again = make_board((33, 33), seed=7)
+    other = make_board((33, 33), seed=8)
     np.testing.assert_array_equal(again.wall, board.wall)
     np.testing.assert_array_equal(again.rubble, board.rubble)
     assert not np.array_equal(other.wall, board.wall)
@@ -118,3 +136,16 @@ def test_board_rejects_bad_shares_and_seeds(not_an_integer):
         make_board((9, 9), seed=-1, home_depth=3)
     with pytest.raises(TypeError, match="seed"):
         make_board((9, 9), seed=not_an_integer, home_depth=3)
+
+
+def test_rings_go_around_each_tile_and_mark_where_the_board_ends():
+    shape = (5, 7)
+    space = board_space(shape)
+    table = rings(shape)
+    assert table.shape == (35, 6)
+    for cell in range(35):
+        ring = table[cell].tolist()
+        inside = [one for one in ring if one < 35]
+        assert sorted(inside) == np.flatnonzero(hops(space, range(35), cell) == 1).tolist()
+        for one, other in zip(ring, [*ring[1:], ring[0]], strict=True):
+            assert one == 35 or other == 35 or hops(space, one, other) == 1

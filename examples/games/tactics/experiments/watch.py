@@ -8,7 +8,7 @@ the decisions go to ``{prefix}_game.gif`` instead, 10 a second.
 
 Run with ``uv run python run.py tactics.watch [start] [prefix] [players...]``: by default the
 first start, a window (an empty prefix, ``""``), and greedy against random. Players are
-``random``, ``greedy`` or ``search`` (minutes a game), one per team, team 0 (red) first.
+``random``, ``greedy``, ``sitter`` or ``search`` (minutes a game), one per team, team 0 (red) first.
 """
 
 from examples.games.browse import figure, finish
@@ -17,6 +17,7 @@ from examples.games.tactics import (
     GreedyPlayer,
     RandomPlayer,
     SearchPlayer,
+    SitterPlayer,
     Tactics,
     TacticsPosition,
     event_text,
@@ -50,7 +51,7 @@ def main(start: str = "0", prefix: str = "", *players: str) -> None:
     record = play(game, seated, game.start(EVAL_SEED + int(start)), names=names)
     positions = list(replay(game, record))
     shares = [material(game, p) for p in positions]
-    winner = "a draw" if record.winner is None else f"{record.winner} wins"
+    winner = f"{record.winner} wins"
     print(
         f"{' against '.join(names)}: {len(record.actions)} decisions, {record.final.round} "
         f"rounds, {winner} (team 0's material {shares[-1]:.3f})."
@@ -85,8 +86,10 @@ def main(start: str = "0", prefix: str = "", *players: str) -> None:
 
 
 def title(position: TacticsPosition, names: list[str], winner: str) -> str:
-    """Return a position's title: the decision, the round, and who plays or who won."""
+    """Return a position's title: the decision, the round, who holds the point, who won."""
     when = "deploying" if position.deploying else f"round {position.round}"
+    if position.hold.owner >= 0:
+        when += f", {names[position.hold.owner]} on the point for {position.hold.clock}"
     end = f": {winner}" if position.over else ""
     return f"{names[0]} (red) against {names[1]} (blue), decision {position.ply}, {when}{end}"
 
@@ -96,6 +99,7 @@ def chosen(name: str) -> Player[Tactics, TacticsPosition]:
     players: dict[str, Player[Tactics, TacticsPosition]] = {
         "random": RandomPlayer(),
         "greedy": GreedyPlayer(),
+        "sitter": SitterPlayer(),
         "search": SearchPlayer(),
     }
     if name not in players:

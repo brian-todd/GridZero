@@ -14,7 +14,7 @@ or rules, its players, how to run its experiments, and what they found.
 | [`simulations/biomes`](simulations/biomes) | Grassland and forest on a planet, each with its grazers, and wolves that hunt in both | Nested states, two levels deep, and apparent competition |
 | [`simulations/settlers`](simulations/settlers) | Farmers and herders settling a world of seasons, droughts, raids and worn-out soil | Eight phases over thousands of steps |
 | [`simulations/population_evolution`](simulations/population_evolution) | One founder species on an empty planet, adapting to its climates and splitting into species | A heritable trait as a component axis, against exact theory |
-| [`games/tactics`](games/tactics) | A two-player skirmish on a 24x24 hex board with walls, rubble and four kinds of unit | Dice, long games, search and AlphaZero on a large board |
+| [`games/tactics`](games/tactics) | A two-player skirmish on a 25x25 hex board: pick a squad, fight over one point, and change the terrain with an engineer | Dice, a choice of pieces, an objective built to be reworked, search and AlphaZero on a large board |
 | [`games/in_a_row`](games/in_a_row) | k in a row, from tic-tac-toe to Connect Four | AlphaZero from scratch, against exact values; code players fit to an agent; a page to play them on |
 | [`games/voronoi`](games/voronoi) | The Voronoi game on a planet: stones on land, the most land nearest one's stones wins | Any number of players, off a lattice |
 | [`games/colonies`](games/colonies) | Orders on a planet under fog of war, each round resolved as a simulation | Hidden information, moves made at once, players knocked out, and MuZero |
@@ -37,7 +37,12 @@ Each README dates its findings; these are the main ones.
   simulations, and made budgets count: a flat top of the ladder spread out.
 - **Search beats heuristics on Tactics** (2026-10-25): open-loop tree search beat the greedy
   player 89% of the time. AlphaZero learned on a 9x9 board, but its self-play drifted into
-  draws and never beat greedy: Tactics' incentives stall it.
+  draws and never beat greedy: Tactics' incentives stall it. So Tactics now has an objective and
+  no draws (2026-11-05): a greedy that seeks the point beats a sitter 240-0 and a pure fighter
+  196-44, and search beats greedy 73%. AlphaZero doesn't beat greedy on these rules yet, even
+  after imitating it. A network taught by the search player holds level with greedy once it
+  searches. An engineer played by search works about 3.7 tiles a game, and is worth about an
+  archer so far.
 - **Self-play drifts into draws** in both two-player board games. A study on a small board
   against the exact solver is open.
 - **The simulations match their theory:** R*, the ideal free distribution, a trophic cascade,

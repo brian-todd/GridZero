@@ -4,9 +4,10 @@ import numpy as np
 import pytest
 
 from examples.games.tactics import (
-    DEFAULT_COUNTS,
+    DEFAULT_CAPS,
     DEFAULT_UNITS,
     UnitStats,
+    default_roster,
     hit_chance,
     hits,
     roll_needed,
@@ -20,10 +21,13 @@ def test_default_units_follow_the_design_table():
         ("archer", 3, 2, 1, 2, 3),
         ("knight", 7, 3, 2, 3, 1),  # move 4 until T6 (2026-10-25)
         ("captain", 9, 4, 3, 2, 1),
+        ("engineer", 3, 2, 1, 2, 3),
     ]
-    passives = np.array([(u.formation, u.defers, u.double_move, u.aura) for u in DEFAULT_UNITS])
-    np.testing.assert_array_equal(passives, np.eye(4, dtype=bool))  # one passive each
-    assert DEFAULT_COUNTS == (6, 3, 2, 1)
+    passives = np.array(
+        [(u.formation, u.defers, u.double_move, u.aura, u.builds) for u in DEFAULT_UNITS]
+    )
+    np.testing.assert_array_equal(passives, np.eye(5, dtype=bool))  # one passive each
+    assert DEFAULT_CAPS == (6, 3, 2, 1, 1)
 
 
 def test_roll_needed_is_eight_less_two_per_point_of_atk_over_def():
@@ -63,3 +67,27 @@ def test_unit_stats_reject_flags_that_are_not_bools():
         UnitStats("x", 1, 1, 1, 1, 1, aura=1)  # ty: ignore[invalid-argument-type]: a wrong type on purpose
     with pytest.raises(TypeError, match="name"):
         UnitStats(3, 1, 1, 1, 1, 1)  # ty: ignore[invalid-argument-type]: a wrong type on purpose
+
+
+@pytest.mark.parametrize(
+    ("caps", "team_size", "roster"),
+    [
+        ((6, 3, 2, 1, 1), 8, (3, 2, 1, 1, 1)),
+        ((6, 3, 2, 1), 8, (4, 2, 1, 1)),
+        ((6, 3, 2, 1), 12, (6, 3, 2, 1)),
+        ((2, 1, 1, 1), 5, (2, 1, 1, 1)),
+        ((6, 0, 2, 1), 5, (3, 0, 1, 1)),
+        ((3, 3, 3), 2, (1, 1, 0)),
+        ((0, 0), 0, (0, 0)),
+    ],
+)
+def test_default_roster_fields_each_kind_then_follows_the_caps(caps, team_size, roster):
+    assert default_roster(caps, team_size) == roster
+
+
+@pytest.mark.parametrize("team_size", range(1, 14))
+def test_default_roster_always_fills_the_team_within_the_caps(team_size):
+    caps = (6, 3, 2, 1, 1)
+    roster = default_roster(caps, team_size)
+    assert sum(roster) == team_size
+    assert all(n <= cap for n, cap in zip(roster, caps, strict=True))

@@ -7,9 +7,13 @@ from typing import SupportsIndex
 
 from .events import (
     Attacked,
+    Broke,
+    Built,
+    Captured,
     Deferred,
     Died,
     Ended,
+    Ending,
     Event,
     GameOver,
     Moved,
@@ -21,6 +25,13 @@ from .events import (
 from .game import Tactics
 from .match import Summary
 from .state import TacticsState
+
+_ENDINGS: dict[Ending, str] = {
+    "killed": "the enemy has no units left",
+    "held": "it held the point long enough",
+    "deadline": "nobody captured the point in time, and team 1 loses",
+    "cap": "it owned the point when the last round ended",
+}
 
 
 def where(state: TacticsState, cell: SupportsIndex) -> str:
@@ -55,21 +66,27 @@ def summary_text(game: Tactics, summary: Summary) -> str:
     Returns
     -------
     str
-        A line of wins, draws, wins by team, and the mean rounds and decisions a game, a blank
-        line, then a Markdown table of the damage dealt and taken, kills and losses by kind.
+        A line of wins, draws, wins by team, and the mean rounds and decisions a game, a line of
+        how games ended and what happened at the point, a blank line, then a Markdown table of the
+        units placed, damage dealt and taken, kills and losses by kind.
     """
     counts = summary.tally
     lines = [
         f"{counts.games} games: wins {counts.wins}, draws {counts.draws}, "
         f"by team {counts.seat_wins.tolist()}, "
         f"{summary.rounds:.1f} rounds and {counts.plies:.0f} decisions a game.",
+        "Ended by: " + ", ".join(f"{why} {n}" for why, n in summary.endings.items()) + f"; "
+        f"{summary.flips} flips, the first capturer won {summary.first_capturer_won}; "
+        f"{summary.shots} deferred attacks, {summary.shots_hit} hit, "
+        f"{summary.shots_flanking} flanking; {summary.built} tiles built, {summary.broke} broken.",
         "",
-        "| Kind | Damage dealt | Damage taken | Kills | Losses |",
-        "|---|---|---|---|---|",
+        "| Kind | Placed | Damage dealt | Damage taken | Kills | Losses |",
+        "|---|---|---|---|---|---|",
     ]
     for k, stats in enumerate(game.units):
         lines.append(
-            f"| {stats.name} | {summary.damage_dealt[k]} | {summary.damage_taken[k]} | "
+            f"| {stats.name} | {summary.placed[k]} | "
+            f"{summary.damage_dealt[k]} | {summary.damage_taken[k]} | "
             f"{summary.kills[k]} | {summary.losses[k]} |"
         )
     return "\n".join(lines)
@@ -108,6 +125,10 @@ def event_text(game: Tactics, state: TacticsState, event: Event) -> str:
             return f"unit {uid} turns to face direction {facing}"
         case Deferred(uid, tile):
             return f"unit {uid} defers its attack onto {where(state, tile)}"
+        case Built(uid, tile, terrain):
+            return f"unit {uid} builds {where(state, tile)} up to {terrain}"
+        case Broke(uid, tile, terrain):
+            return f"unit {uid} breaks {where(state, tile)} down to {terrain}"
         case Attacked():
             kind = "a deferred attack on" if event.deferred else "attacks"
             outcome = f"hits for {event.damage}" if event.hit else "misses"
@@ -124,7 +145,10 @@ def event_text(game: Tactics, state: TacticsState, event: Event) -> str:
             return f"unit {uid} ends its turn"
         case RoundStarted(round_):
             return f"round {round_} begins"
-        case GameOver(winner):
-            return "the game is a draw" if winner is None else f"team {winner} wins"
+        case Captured(team, round_, flip):
+            verb = "takes" if flip else "captures"
+            return f"team {team} {verb} the point at the end of round {round_}"
+        case GameOver(winner, reason):
+            return f"team {winner} wins: {_ENDINGS[reason]}"
         case _:
             raise TypeError(f"not an event: {event!r}")

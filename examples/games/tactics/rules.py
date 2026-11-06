@@ -40,6 +40,8 @@ class UnitStats:
     aura : bool, default False
         Gives friendly units within ``Tactics.aura_radius``, itself included,
         ``Tactics.aura_bonus`` Atk and Def. Auras don't stack. Captains have it.
+    builds : bool, default False
+        May spend its attack on building or breaking an adjacent tile. Engineers have it.
 
     Raises
     ------
@@ -59,6 +61,7 @@ class UnitStats:
     defers: bool = False
     double_move: bool = False
     aura: bool = False
+    builds: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str):
@@ -69,7 +72,7 @@ class UnitStats:
         check_int(self.move, "move", minimum=0)
         if check_real(self.reach, "reach") <= 0:
             raise ValueError(f"reach must be positive, got {self.reach}")
-        for flag in ("formation", "defers", "double_move", "aura"):
+        for flag in ("formation", "defers", "double_move", "aura", "builds"):
             if not isinstance(getattr(self, flag), bool):
                 raise TypeError(f"{flag} must be a bool, got {getattr(self, flag)!r}")
 
@@ -78,10 +81,49 @@ FOOTSOLDIER = UnitStats("footsoldier", hp=5, atk=4, defense=2, move=2, reach=1, 
 ARCHER = UnitStats("archer", hp=3, atk=2, defense=1, move=2, reach=3, defers=True)
 KNIGHT = UnitStats("knight", hp=7, atk=3, defense=2, move=3, reach=1, double_move=True)
 CAPTAIN = UnitStats("captain", hp=9, atk=4, defense=3, move=2, reach=1, aura=True)
-DEFAULT_UNITS = (FOOTSOLDIER, ARCHER, KNIGHT, CAPTAIN)
-"""The four kinds of the first rules, in the order of their kind numbers 0 to 3."""
-DEFAULT_COUNTS = (6, 3, 2, 1)
-"""How many units of each kind of `DEFAULT_UNITS` each side has: 12 in all."""
+ENGINEER = UnitStats("engineer", hp=3, atk=2, defense=1, move=2, reach=3, builds=True)
+DEFAULT_UNITS = (FOOTSOLDIER, ARCHER, KNIGHT, CAPTAIN, ENGINEER)
+"""The kinds of the default rules, in the order of their kind numbers 0 to 4."""
+DEFAULT_CAPS = (6, 3, 2, 1, 1)
+"""The most units of each kind of `DEFAULT_UNITS` a side may field."""
+
+
+def default_roster(caps: tuple[int, ...], team_size: int) -> tuple[int, ...]:
+    """Return a team that fields every kind it can, then follows the caps.
+
+    One of each kind with a cap, in order while the team has room, then the remaining places in
+    proportion to what the caps have left, by largest remainders (ties to the lower kind). With
+    caps of 6/3/2/1/1 and a team of 8 that is 3/2/1/1/1.
+
+    Parameters
+    ----------
+    caps : tuple of int
+        The most of each kind a side may field, per kind.
+    team_size : int
+        How many units to field, at most ``sum(caps)``.
+
+    Returns
+    -------
+    tuple of int
+        How many of each kind, summing to ``team_size``, each within its cap.
+    """
+    roster = [0] * len(caps)
+    left = team_size
+    for kind, cap in enumerate(caps):
+        if cap > 0 and left > 0:
+            roster[kind] = 1
+            left -= 1
+    spare = [cap - have for cap, have in zip(caps, roster, strict=True)]
+    total = sum(spare)
+    if left > 0:
+        quotas = [left * s / total for s in spare]
+        for kind, quota in enumerate(quotas):
+            roster[kind] += int(quota)
+        left -= sum(int(quota) for quota in quotas)
+        by_remainder = sorted(range(len(caps)), key=lambda k: (int(quotas[k]) - quotas[k], k))
+        for kind in by_remainder[:left]:
+            roster[kind] += 1
+    return tuple(roster)
 
 
 def roll_needed(atk: int, defense: int, base: int = 8, step: int = 2) -> int:

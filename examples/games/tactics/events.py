@@ -1,4 +1,4 @@
-"""What a step of Tactics did: placements, moves, rolls, hits, deaths and the rounds.
+"""What a step of Tactics did: placements, moves, work, rolls, hits, deaths and the rounds.
 
 Each `TacticsPosition` carries the events of the step that made it, in the order they happened, so a
 game's record is the concatenation of its positions' events. Units are named by uid, which
@@ -6,7 +6,11 @@ stays with them as they move, and attacks and deaths carry kinds and teams too, 
 need no lookup.
 """
 
-from typing import NamedTuple
+from typing import Literal, NamedTuple
+
+type Ending = Literal["killed", "held", "deadline", "cap"]
+"""Why a game ended: a side had no units, a side held the point long enough, nobody captured the
+point in time, or the last round passed."""
 
 
 class Placed(NamedTuple):
@@ -50,6 +54,24 @@ class Deferred(NamedTuple):
 
     uid: int
     tile: int
+
+
+class Built(NamedTuple):
+    """An engineer raised a tile one step of the ladder: open to rubble, rubble to wall."""
+
+    uid: int
+    tile: int
+    terrain: Literal["rubble", "wall"]
+    """What the tile is now."""
+
+
+class Broke(NamedTuple):
+    """An engineer lowered a tile one step of the ladder: wall to rubble, rubble to open."""
+
+    uid: int
+    tile: int
+    terrain: Literal["rubble", "open"]
+    """What the tile is now."""
 
 
 class Attacked(NamedTuple):
@@ -97,13 +119,35 @@ class RoundStarted(NamedTuple):
     round: int
 
 
-class GameOver(NamedTuple):
-    """The game ended: a side has no units, or the last round passed (a draw, ``winner=None``)."""
+class Captured(NamedTuple):
+    """At the end of a round a side took the point."""
 
-    winner: int | None
+    team: int
+    round: int
+    flip: bool
+    """Whether it took the point from the enemy, rather than being the first to hold it."""
+
+
+class GameOver(NamedTuple):
+    """The game ended, and why (see `objective`). A game has no draws."""
+
+    winner: int
+    reason: Ending
 
 
 type Event = (
-    Placed | Moved | Swapped | Turned | Deferred | Attacked | Died | Ended | RoundStarted | GameOver
+    Placed
+    | Moved
+    | Swapped
+    | Turned
+    | Deferred
+    | Built
+    | Broke
+    | Attacked
+    | Died
+    | Ended
+    | RoundStarted
+    | Captured
+    | GameOver
 )
 """Anything a step records."""
