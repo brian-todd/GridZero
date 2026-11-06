@@ -11,7 +11,7 @@ is scored on, and what sets of games show), `picture.py`, `pictures.py` or `text
 position is drawn), its experiments in `experiments/`, and a `README.md`. Each game but
 `in_a_row` has a `watch` experiment, built on `browse.py`. `experiments/` here holds the
 experiments over any game's output, run as ``games.<name>``: `games.curves` shows training runs
-(`curves.py`).
+(`curves.py`). `fitting.py` holds the arithmetic code players share.
 """
 
 import os

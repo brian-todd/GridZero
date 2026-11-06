@@ -11,8 +11,9 @@ from examples.games.tactics import (
     GameOver,
     Tactics,
     TacticsPosition,
+    small_rules,
 )
-from examples.games.tactics.experiments.zero_scratch import endings, small_rules
+from examples.games.tactics.experiments.zero_scratch import endings
 from gridzero.agents.net import NetEvaluator, PolicyNet, as_input
 from gridzero.agents.zero import AlphaZeroPlayer, self_play
 from gridzero.agents.zero_train import (

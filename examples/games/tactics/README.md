@@ -63,6 +63,8 @@ turn, so a network plays both sides the same way.
   point's clock (`standing`).
 - Through `agents`: `UniformPlayer`, `NetPlayer` and `AlphaZeroPlayer` on a `PolicyNet`, since
   `Tactics` is an `agents.Learnable`.
+- A code player: `AlphaZeroPlayer` on `CodeEvaluator`, plain code of named features and constants
+  and no network. `HAND_PICKED` holds constants picked by hand.
 
 ## Experiments
 
@@ -70,6 +72,7 @@ turn, so a network plays both sides the same way.
 |---|---|
 | `tactics.tournament [starts] [prefix]` | Greedy against random, and greedy against itself (is the game even by side?); a picture of a game's end |
 | `tactics.search [starts] [budgets...]` | The search player against greedy at a few budgets of simulations |
+| `tactics.code_ladder [starts] [size] [simulations...]` | The code player against random and greedy, and what a decision costs |
 | `tactics.rules [starts] [prefix] [hold_rounds...]` | How games end, pure styles, the engineer against an archer, and rosters, as tables and `{prefix}_rules.json`, to compare versions of the objective |
 | `tactics.watch [start] [prefix] [players...]` | One game, decision by decision, in a window or a GIF (random, greedy, sitter, search) |
 | `tactics.zero_scratch <minutes> [prefix] ...` | AlphaZero on a 15x15 board, from scratch or after imitating greedy, in a time box, with endings, picks and work by generation |
@@ -133,6 +136,13 @@ search, rerun once greedy went back for an owned point an enemy stands on; the r
   Without a plane saying which side loses at the deadline, the value's error before training was
   1.5, worse than guessing, and with it 0.7 by the second generation.
 
+**The code player, constants picked by hand** (2026-11-06, `tactics.code_ladder`, 96 games a line on
+15x15). It beat random 96-0 at every budget, and lost to greedy: 2-94 on its prior alone, 17-79 at
+16 simulations, 31-65 at 32, 30-66 at 128. A decision takes about 14 ms at 32 simulations (about
+0.2 ms for greedy, 200 ms for the search player). So the search adds much at first, then little:
+more simulations don't make up for its judgment. On the full board at 32 simulations it went 96-0
+and 35-61, so it doesn't lean on the small board.
+
 **Under earlier rules** (twelve fixed units, no point, hit points at the round cap), kept for the
 history of the agents:
 
@@ -173,5 +183,6 @@ experiment can make any more. `zero_check` still plays saved full-size weights.
 | `events.py` | What a step did: `Placed`, `Moved`, `Built`, `Attacked`, `Captured`, `GameOver`, ... |
 | `players.py` | `RandomPlayer`, `GreedyPlayer`, `SitterPlayer` |
 | `search.py` | `SearchPlayer`, `Plan`, `standing`, `material` |
-| `match.py` | `EVAL_SEED`, `summarize`, `balance` |
+| `code_player.py` | `CodeEvaluator`, `HAND_PICKED`, `value_features`, `move_features` |
+| `match.py` | `EVAL_SEED`, `small_rules`, `summarize`, `balance` |
 | `text.py`, `pictures.py` | Events and summaries as text; boards drawn as hexes |

@@ -39,6 +39,7 @@ from examples.games.tactics import (
     RandomPlayer,
     Tactics,
     TacticsPosition,
+    small_rules,
     summarize,
 )
 from examples.games.tactics.events import Ending
@@ -209,21 +210,6 @@ def show(label: str, result: dict[str, Score]) -> None:
     """
     text = ", ".join(f"{name} {won}-{lost}-{drawn}" for name, (won, lost, drawn) in result.items())
     print(f"{label}: network alone against {text} (wins-losses-draws).", flush=True)
-
-
-def small_rules() -> Tactics:
-    """Return the rules this trains on: the default team and caps, on a 15x15 board.
-
-    Chosen with greedy players (2026-11-05) to end as the full board does, 38% of games by holding
-    and 62% by killing, in 5.2 rounds and about 176 decisions. On 9x9, 97% to 100% end by killing,
-    in 3 rounds, and the objective hardly matters.
-
-    Returns
-    -------
-    Tactics
-        The rules: 4 rounds to hold, a deadline at round 8 and a cap at round 16.
-    """
-    return Tactics(shape=(15, 15), home_depth=4, hold_rounds=4, capture_by=8, max_rounds=16)
 
 
 def main(

@@ -43,6 +43,7 @@ Each README dates its findings; these are the main ones.
   after imitating it. A network taught by the search player holds level with greedy once it
   searches. An engineer played by search works about 3.7 tiles a game, and is worth about an
   archer so far.
+  A code player with constants picked by hand beats random 96-0 and loses to greedy 31-65.
 - **Self-play drifts into draws** in both two-player board games. A study on a small board
   against the exact solver is open.
 - **The simulations match their theory:** R*, the ideal free distribution, a trophic cascade,

@@ -46,8 +46,9 @@ Players and matches
 -------------------
 RandomPlayer, GreedyPlayer, SitterPlayer
     Who picks an action from the legal ones.
-summarize, Summary, balance, Balance, EVAL_SEED
-    What games show, how fair and lively they were, and the boards players are scored on.
+summarize, Summary, balance, Balance, EVAL_SEED, small_rules
+    What games show, how fair and lively they were, the boards players are scored on, and rules
+    for quick games on a 15x15 board.
     `game.play` and `game.series` play them: `Tactics` is a `game.Game`.
 Tactics.observe, Tactics.planes, Tactics.frame
     What a team sees: planes per cell in its own frame, for networks (`agents.frame.Learnable`).
@@ -56,6 +57,8 @@ event_text, summary_text
 SearchPlayer, Plan, material, standing
     A player that searches plans for whole unit turns by open-loop Monte Carlo tree search,
     judged by the greedy player.
+CodeEvaluator, HAND_PICKED, value_features, move_features, VALUE_FEATURES, MOVE_FEATURES
+    A code player: judges positions by named features and constants, for `agents.AlphaZeroPlayer`.
 
 `pictures.draw` draws a position on matplotlib's axes, with `render.cells`. It is not imported
 here, so importing the game doesn't import matplotlib.
@@ -64,6 +67,14 @@ here, so importing the game doesn't import matplotlib.
 from gridzero.game import Action
 
 from .board import board_space, homes, make_board
+from .code_player import (
+    HAND_PICKED,
+    MOVE_FEATURES,
+    VALUE_FEATURES,
+    CodeEvaluator,
+    move_features,
+    value_features,
+)
 from .events import (
     Attacked,
     Broke,
@@ -82,7 +93,7 @@ from .events import (
     Turned,
 )
 from .game import Odds, Tactics
-from .match import EVAL_SEED, Balance, Summary, balance, summarize
+from .match import EVAL_SEED, Balance, Summary, balance, small_rules, summarize
 from .players import GreedyPlayer, RandomPlayer, SitterPlayer
 from .rules import (
     DEFAULT_CAPS,
@@ -101,12 +112,16 @@ __all__ = [
     "DEFAULT_CAPS",
     "DEFAULT_UNITS",
     "EVAL_SEED",
+    "HAND_PICKED",
+    "MOVE_FEATURES",
+    "VALUE_FEATURES",
     "Action",
     "Attacked",
     "Balance",
     "Broke",
     "Built",
     "Captured",
+    "CodeEvaluator",
     "Deferred",
     "Died",
     "Ended",
@@ -142,9 +157,12 @@ __all__ = [
     "homes",
     "make_board",
     "material",
+    "move_features",
     "roll_needed",
+    "small_rules",
     "standing",
     "summarize",
     "summary_text",
     "units",
+    "value_features",
 ]

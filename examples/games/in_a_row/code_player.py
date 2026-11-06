@@ -17,6 +17,7 @@ from typing import NamedTuple
 import numpy as np
 from numpy.typing import NDArray
 
+from examples.games.fitting import sigmoid, weighted
 from gridzero.core import check_real
 
 from .game import PLACE, InARow
@@ -59,44 +60,6 @@ def _distance_to_center(game: InARow) -> NDArray[np.float64]:
     distance = np.abs(columns - (game.shape[0] - 1) / 2).astype(np.float64)
     distance.flags.writeable = False
     return distance
-
-
-def _weighted(
-    features: NDArray[np.float64], weights: tuple[float, ...], start: float
-) -> NDArray[np.float64]:
-    """Return ``start`` plus the weighted features of each row, the same in any batch.
-
-    Parameters
-    ----------
-    features : ndarray of float64, shape (n, len(weights))
-        The features of each row.
-    weights : tuple of float
-        A weight per feature, added in order: a matrix product's sum depends on the batch.
-    start : float
-        What every sum starts from.
-
-    Returns
-    -------
-    ndarray of float64, shape (n,)
-        The sums.
-
-    Raises
-    ------
-    ValueError
-        If a sum overflows.
-    """
-    score = np.full(len(features), float(start))
-    with np.errstate(over="ignore", invalid="ignore"):  # checked below
-        for j, weight in enumerate(weights):
-            score += weight * features[:, j]
-    if not np.isfinite(score).all():
-        raise ValueError("a position's score overflows: the weights are too large")
-    return score
-
-
-def _sigmoid(score: NDArray[np.float64]) -> NDArray[np.float64]:
-    """Return the sigmoid of scores, shape as given, without overflow at any size."""
-    return 0.5 + 0.5 * np.tanh(0.5 * score)
 
 
 @dataclass(frozen=True)
@@ -154,8 +117,8 @@ class LineEvaluator:
             )
         counts = open_lines(game, positions)[:, :, 1 : game.length]  # (n, 2, length - 1)
         lead = (counts[:, 0] - counts[:, 1]).astype(np.float64)  # (n, length - 1)
-        score = _weighted(lead, self.weights, 0.0)
-        values = _sigmoid(score)
+        score = weighted(lead, self.weights, 0.0)
+        values = sigmoid(score)
         distance = _distance_to_center(game)
         logits = [-self.center * distance[np.flatnonzero(mask[PLACE])] for mask in legal]
         return logits, values
@@ -485,7 +448,7 @@ class FittedEvaluator:
         ply = np.array([position.ply for position in positions], dtype=np.int64)
         values = fitted_values(game, self, owner, ply)
         logits = [
-            _weighted(move_features(game, owner[i], int(ply[i]))[1], self.prior, 0.0)
+            weighted(move_features(game, owner[i], int(ply[i]))[1], self.prior, 0.0)
             for i in range(len(positions))
         ]
         return logits, values
@@ -563,4 +526,4 @@ def fitted_values(
     ValueError
         If a score overflows.
     """
-    return _sigmoid(_weighted(value_features(game, owner, ply), fit.value, fit.intercept))
+    return sigmoid(weighted(value_features(game, owner, ply), fit.value, fit.intercept))

@@ -172,6 +172,13 @@ def test_search(capsys):
     assert "Check: search beats greedy at 1 simulations:" in out
 
 
+def test_tactics_code_ladder(capsys):
+    out = ran(capsys, "tactics.code_ladder", 1, 15, 1)
+    assert "1 simulations: " in out
+    assert "Against random " in out
+    assert ", greedy " in out
+
+
 @pytest.mark.slow
 def test_rules(capsys, tmp_path):
     out = ran(capsys, "tactics.rules", 1, tmp_path / "rules", 5)
