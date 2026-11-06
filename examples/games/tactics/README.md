@@ -73,8 +73,8 @@ turn, so a network plays both sides the same way.
 | `tactics.tournament [starts] [prefix]` | Greedy against random, and greedy against itself (is the game even by side?); a picture of a game's end |
 | `tactics.search [starts] [budgets...]` | The search player against greedy at a few budgets of simulations |
 | `tactics.code_games [games] [prefix] [work_plans] [replica] [minutes]` | The search player against itself on 15x15, saved as `{prefix}_lessons.npz` for code players to fit to |
-| `tactics.code_fit <prefix> <lessons...>` | A code player's constants fit to those games, scored on games kept out against simple baselines, and saved as `{prefix}_fit.json` |
-| `tactics.code_ladder [weights] [starts] [size] [simulations...]` | The code player against random and greedy, and what a decision costs |
+| `tactics.code_fit <prefix> <lessons...>` | A code player's constants fit to those games, scored on games kept out against simple baselines, and saved as `{prefix}_fit.json`, with what plays as `{prefix}_player.json` |
+| `tactics.code_ladder [weights] [starts] [size] [budgets] [replica] [rivals...]` | The code player against random, greedy or the search player, at equal simulations or equal time, and what a decision costs |
 | `tactics.rules [starts] [prefix] [hold_rounds...]` | How games end, pure styles, the engineer against an archer, and rosters, as tables and `{prefix}_rules.json`, to compare versions of the objective |
 | `tactics.watch [start] [prefix] [players...]` | One game, decision by decision, in a window or a GIF (random, greedy, sitter, search) |
 | `tactics.zero_scratch <minutes> [prefix] ...` | AlphaZero on a 15x15 board, from scratch or after imitating greedy, in a time box, with endings, picks and work by generation |
@@ -165,7 +165,30 @@ the fit gives a knight's hit points about 0. Taking only that weight from the ha
 The teacher's value really is flat in a knight's lead (0.49 a knight up, 0.51 down, other units level),
 while the side a knight up goes on to win 65% against 47%. Fitting to who won gives the knight +0.37, but
 plays no better (141-243): a value that copies a judge inherits what it misjudges, and being right about
-who wins isn't enough for choosing moves.
+who wins isn't enough for choosing moves. So the constants that play (`{prefix}_player.json`) are the fit's
+but for that weight, taken by hand: the one thing in them a person, not the teacher, decided.
+
+**The code player that came of it** (2026-11-06, `tactics.code_ladder`, starts of their own, not those the
+choice above was made on; fit on 15x15 only). Records against greedy over 192 games, against the search
+player over 96, which at 50 simulations is the player it was fit to:
+
+| Board | Simulations | ms a decision | v random | v greedy | v search player |
+|---|---|---|---|---|---|
+| 15x15 | 32 | 13 | 192-0 | 91-101 | |
+| 15x15 | 50 | 21 | | | 53-43 |
+| 15x15 | 64 | 28 | 192-0 | 122-70 | |
+| 15x15 | 128 | 57 | 192-0 | 135-57 | 48-48 |
+| 15x15 | about 400, the search player's time | 192 | 192-0 | 128-64 | 47-49 |
+| 25x25 | 32 | 14 | 192-0 | 117-75 | |
+| 25x25 | 50 | 22 | | | 55-41 |
+| 25x25 | 64 | 29 | 192-0 | 114-78 | |
+| 25x25 | 128 | 61 | 192-0 | 137-55 | 56-40 |
+
+The search player itself beat greedy 130-62 on 15x15 and 57-39 over 96 games on 25x25, at about 170 ms a
+decision on 15x15. So the code player clearly beats greedy, matches its teacher on the board it learned on at
+a third of the time, and on the board it never saw does at least as well: 111-81 together, where 50 simulations
+a turn spread the teacher thin. It is flat past about 128 simulations. All of this is against a teacher at 50
+simulations; a stronger one has not been tried.
 
 **Under earlier rules** (twelve fixed units, no point, hit points at the round cap), kept for the
 history of the agents:

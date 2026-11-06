@@ -46,6 +46,10 @@ _VERBS = np.array(
 """The columns of the prior's baseline: what kind of action it is, and nothing about where."""
 _LOGIT_EDGE = 1e-6
 """How close to 0 or 1 a value counts, in a score of who won."""
+OVERRULED = ("hp_knight",)
+"""The value's weights taken from `HAND_PICKED` in the constants that play. The teacher's value is
+flat in a knight's lead, though the side ahead goes on to win more often, and a fit copies that: on
+the prior of a fit, this one weight is the difference between 35% and 51% against greedy."""
 
 
 class Cases(NamedTuple):
@@ -258,6 +262,26 @@ def fit(cases: Cases, seed: int) -> tuple[CodeEvaluator, FitScore]:
         _value_scores(cases, out, evaluator),
         _prior_scores(cases, out, evaluator),
     )
+
+
+def overruled(fitted: CodeEvaluator) -> CodeEvaluator:
+    """Return a fit's constants for playing: `OVERRULED` weights taken from `HAND_PICKED`.
+
+    Parameters
+    ----------
+    fitted : CodeEvaluator
+        A fit.
+
+    Returns
+    -------
+    CodeEvaluator
+        The same but for the weights of `OVERRULED`.
+    """
+    value = tuple(
+        HAND_PICKED.value[j] if name in OVERRULED else fitted.value[j]
+        for j, name in enumerate(VALUE_FEATURES)
+    )
+    return CodeEvaluator(value, fitted.intercept, fitted.prior)
 
 
 def fit_value(

@@ -26,8 +26,10 @@ from examples.games.in_a_row import (
     InARow,
     Lessons,
 )
+from examples.games.tactics import EVAL_SEED as TACTICS_SEED
 from examples.games.tactics import Lessons as TacticsLessons
 from examples.games.tactics import SearchPlayer, Tactics, lessons_of, small_rules
+from examples.games.tactics.experiments import code_ladder
 from examples.games.voronoi import EVAL_SEED as VORONOI_SEED
 from examples.games.voronoi import Greedy, Voronoi
 from examples.simulations.biomes import Biomes
@@ -187,6 +189,23 @@ def test_tactics_code_ladder(capsys):
     assert ", greedy " in out
 
 
+def test_tactics_code_ladder_plays_a_replica_and_rivals_by_name(capsys):
+    out = ran(capsys, "tactics.code_ladder", "hand", 1, 15, "1,2", 1, "greedy")
+    assert "Against greedy " in out
+    assert "random" not in out
+    assert "2 simulations: " in out
+
+
+def test_tactics_code_ladder_replicas_have_starts_of_their_own():
+    assert code_ladder.first_start(0) == TACTICS_SEED
+    assert code_ladder.first_start(1) - code_ladder.first_start(0) >= 1000
+
+
+def test_tactics_code_ladder_refuses_an_unknown_rival(capsys):
+    with pytest.raises(KeyError, match="nobody"):
+        ran(capsys, "tactics.code_ladder", "hand", 1, 15, 1, 0, "nobody")
+
+
 def test_tactics_code_fit_saves_constants_the_ladder_plays(capsys, tmp_path):
     game = small_rules()
     teacher = SearchPlayer(simulations=2, plans=2, depth=1, rollout_turns=1)
@@ -198,7 +217,8 @@ def test_tactics_code_fit_saves_constants_the_ladder_plays(capsys, tmp_path):
     assert "Prior on 1 games kept out" in out
     saved = tmp_path / "code_fit.json"
     assert set(json.loads(saved.read_text())) == {"value", "intercept", "prior"}
-    assert "Against random " in ran(capsys, "tactics.code_ladder", saved, 1, 15, 1)
+    played = tmp_path / "code_player.json"
+    assert "Against random " in ran(capsys, "tactics.code_ladder", played, 1, 15, 1)
 
 
 def test_tactics_code_fit_refuses_a_prefix_already_used(capsys, tmp_path):

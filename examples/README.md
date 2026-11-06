@@ -43,9 +43,9 @@ Each README dates its findings; these are the main ones.
   after imitating it. A network taught by the search player holds level with greedy once it
   searches. An engineer played by search works about 3.7 tiles a game, and is worth about an
   archer so far.
-  A code player with constants picked by hand beats random 96-0 and loses to greedy 31-65. Fit to the
-  search player, its prior brings it level with greedy; its value inherits the search's blind spot
-  for knights.
+  A code player fit to the search player beats greedy 135-57 and matches the search player at a third of
+  its time per decision, also on a board it wasn't fit on, once one weight is corrected by hand: the
+  search's own value is blind to knights.
 - **Self-play drifts into draws** in both two-player board games. A study on a small board
   against the exact solver is open.
 - **The simulations match their theory:** R*, the ideal free distribution, a trophic cascade,

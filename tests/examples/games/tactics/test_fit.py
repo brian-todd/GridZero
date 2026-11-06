@@ -6,6 +6,7 @@ import pytest
 
 from examples.games.regression import held_out
 from examples.games.tactics import (
+    HAND_PICKED,
     MOVE_FEATURES,
     VALUE_FEATURES,
     GreedyPlayer,
@@ -25,6 +26,7 @@ from examples.games.tactics.fit import (
     fit_value,
     game_cases,
     join_cases,
+    overruled,
     prior_score,
     value_score,
 )
@@ -341,3 +343,13 @@ def test_value_score_with_no_positions_has_nothing_to_say():
     assert score.correlation == 0.0
     assert math.isnan(score.error)
     assert math.isnan(score.winner_loss)
+
+
+def test_overruled_takes_only_the_knights_weight_from_the_hand_picked_constants():
+    fitted, _ = fit(made_cases(games=6, decisions=6), 0)
+    played = overruled(fitted)
+    knight = VALUE_FEATURES.index("hp_knight")
+    assert played.value[knight] == HAND_PICKED.value[knight]
+    assert played.value[:knight] == fitted.value[:knight]
+    assert played.value[knight + 1 :] == fitted.value[knight + 1 :]
+    assert (played.intercept, played.prior) == (fitted.intercept, fitted.prior)
