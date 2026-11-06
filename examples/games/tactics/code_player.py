@@ -9,9 +9,11 @@ to the point (about 8 us) and distances between units (about 14 us), but no line
 100 us), where distance stands in for them. Moves ignore walls when they count who could reach whom.
 """
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cache
+from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
@@ -487,6 +489,51 @@ class CodeEvaluator:
             for position, mask in zip(positions, legal, strict=True)
         ]
         return logits, values
+
+    def save(self, path: str | Path) -> None:
+        """Write the constants as JSON, by name, so they can be read and ported.
+
+        Parameters
+        ----------
+        path : str or Path
+            The file to write.
+        """
+        Path(path).write_text(
+            json.dumps(
+                {
+                    "value": dict(zip(VALUE_FEATURES, self.value, strict=True)),
+                    "intercept": self.intercept,
+                    "prior": dict(zip(MOVE_FEATURES, self.prior, strict=True)),
+                },
+                indent=2,
+            )
+        )
+
+    @staticmethod
+    def load(path: str | Path) -> CodeEvaluator:
+        """Read constants written by `save`.
+
+        Parameters
+        ----------
+        path : str or Path
+            The file to read.
+
+        Returns
+        -------
+        CodeEvaluator
+            The evaluator.
+
+        Raises
+        ------
+        KeyError
+            If a feature's weight is missing: the file is of another set of features.
+        """
+        data = json.loads(Path(path).read_text())
+        return CodeEvaluator(
+            tuple(float(data["value"][name]) for name in VALUE_FEATURES),
+            float(data["intercept"]),
+            tuple(float(data["prior"][name]) for name in MOVE_FEATURES),
+        )
 
 
 def _by_name(names: tuple[str, ...], **weights: float) -> tuple[float, ...]:

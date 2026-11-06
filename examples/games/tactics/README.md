@@ -73,7 +73,8 @@ turn, so a network plays both sides the same way.
 | `tactics.tournament [starts] [prefix]` | Greedy against random, and greedy against itself (is the game even by side?); a picture of a game's end |
 | `tactics.search [starts] [budgets...]` | The search player against greedy at a few budgets of simulations |
 | `tactics.code_games [games] [prefix] [work_plans] [replica] [minutes]` | The search player against itself on 15x15, saved as `{prefix}_lessons.npz` for code players to fit to |
-| `tactics.code_ladder [starts] [size] [simulations...]` | The code player against random and greedy, and what a decision costs |
+| `tactics.code_fit <prefix> <lessons...>` | A code player's constants fit to those games, scored on games kept out against simple baselines, and saved as `{prefix}_fit.json` |
+| `tactics.code_ladder [weights] [starts] [size] [simulations...]` | The code player against random and greedy, and what a decision costs |
 | `tactics.rules [starts] [prefix] [hold_rounds...]` | How games end, pure styles, the engineer against an archer, and rosters, as tables and `{prefix}_rules.json`, to compare versions of the objective |
 | `tactics.watch [start] [prefix] [players...]` | One game, decision by decision, in a window or a GIF (random, greedy, sitter, search) |
 | `tactics.zero_scratch <minutes> [prefix] ...` | AlphaZero on a 15x15 board, from scratch or after imitating greedy, in a time box, with endings, picks and work by generation |
@@ -149,6 +150,23 @@ and 35-61, so it doesn't lean on the small board.
 game; without them, team 0 won 51% and it changed 0.1. So the lean to team 1 under greedy (43%) doesn't
 show between search players, and 600 games only measure a seat to about 4 points either way.
 
+**A code player fit to the search player** (2026-11-06, `tactics.code_fit`, the games above with plans
+to work, 120 of 600 kept out). Its value correlates 0.81 with the teacher's (0.72 for the hand-picked
+constants, 0.66 for material alone). Its prior picks the teacher's action 69% of the time (42% by hand,
+36% by the verb alone), and greedy picks it 79%, ahead on deferred attacks and placement: the teacher's
+plans are mostly greedy's. Weights hardly move between the games with and without work, except those of
+work itself.
+
+Better imitation didn't all play better. At 32 simulations on 15x15, against greedy on one seed set, 384
+games a line, or 192 where marked: hand value and hand prior 55-137 (192), fit value and fit prior 135-249,
+hand value and fit prior 206-178. So the prior gains much, and the value loses it, through one weight:
+the fit gives a knight's hit points about 0. Taking only that weight from the hand-picked constants gives
+195-189, and giving only that one to them gives 117-267; no other group of weights moves the record much.
+The teacher's value really is flat in a knight's lead (0.49 a knight up, 0.51 down, other units level),
+while the side a knight up goes on to win 65% against 47%. Fitting to who won gives the knight +0.37, but
+plays no better (141-243): a value that copies a judge inherits what it misjudges, and being right about
+who wins isn't enough for choosing moves.
+
 **Under earlier rules** (twelve fixed units, no point, hit points at the round cap), kept for the
 history of the agents:
 
@@ -191,5 +209,6 @@ experiment can make any more. `zero_check` still plays saved full-size weights.
 | `search.py` | `SearchPlayer`, `Plan`, `Judgment`, `standing`, `material` |
 | `code_player.py` | `CodeEvaluator`, `HAND_PICKED`, `value_features`, `move_features` |
 | `lessons.py` | `Lessons`, `lessons_of`, `positions_of`, `teach`: a search player's games kept to fit to |
+| `fit.py` | `fit`, `cases_of`, `FitScore`: a code player's constants fit to those games and scored |
 | `match.py` | `EVAL_SEED`, `small_rules`, `summarize`, `balance` |
 | `text.py`, `pictures.py` | Events and summaries as text; boards drawn as hexes |

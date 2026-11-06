@@ -1,12 +1,13 @@
 """Set the code player against random and greedy, on the small board or the full one.
 
-The code player is `agents.AlphaZeroPlayer` on `code_player.HAND_PICKED`, without noise: boards
-differ from start to start, so games do too. Prints what a decision costs over one game of the
-player against itself, then at each budget of simulations its record against each rival on the
-games players are scored on (`EVAL_SEED`), on every core.
+The code player is `agents.AlphaZeroPlayer` on `code_player.HAND_PICKED` or on constants a fit
+saved, without noise: boards differ from start to start, so games do too. Prints what a decision
+costs over one game of the player against itself, then at each budget of simulations its record
+against each rival on the games players are scored on (`EVAL_SEED`), on every core.
 
-Run with ``uv run python run.py tactics.code_ladder [starts] [size] [simulations...]``: by default
-48 starts on 15x15 (`small_rules`) at 32 and 64 simulations. Any other size is the full rules.
+Run with ``uv run python run.py tactics.code_ladder [weights] [starts] [size] [simulations...]``:
+by default `HAND_PICKED`, 48 starts on 15x15 (`small_rules`) at 32 and 64 simulations. Any other
+size is the full rules.
 """
 
 import dataclasses
@@ -18,6 +19,7 @@ from examples.games import CORES
 from examples.games.tactics import (
     EVAL_SEED,
     HAND_PICKED,
+    CodeEvaluator,
     GreedyPlayer,
     RandomPlayer,
     Tactics,
@@ -30,11 +32,13 @@ from gridzero.game import Player, ladder
 SEED = 1  # the draws of the timed game
 
 
-def main(starts: str = "48", size: str = "15", *simulations: str) -> None:
+def main(weights: str = "hand", starts: str = "48", size: str = "15", *simulations: str) -> None:
     """Print what a decision costs and the player's record at each budget.
 
     Parameters
     ----------
+    weights : str, default "hand"
+        Constants saved by ``tactics.code_fit``, or ``hand`` for `HAND_PICKED`.
     starts : str, default "48"
         Starts against each rival, each played once per rotation of the seats.
     size : str, default "15"
@@ -44,12 +48,13 @@ def main(starts: str = "48", size: str = "15", *simulations: str) -> None:
     """
     side = int(size)
     game = small_rules() if side == 15 else dataclasses.replace(Tactics(), shape=(side, side))
+    evaluator = HAND_PICKED if weights == "hand" else CodeEvaluator.load(weights)
     rivals: dict[str, Player[Tactics, TacticsPosition]] = {
         "random": RandomPlayer(),
         "greedy": GreedyPlayer(),
     }
     for budget in [int(s) for s in simulations or ("32", "64")]:
-        player = AlphaZeroPlayer(HAND_PICKED, simulations=budget)
+        player = AlphaZeroPlayer(evaluator, simulations=budget)
         print(f"{budget} simulations: {_cost(game, player) * 1e3:.1f} ms a decision.", flush=True)
         start = time.perf_counter()
         scores = ladder(game, player, rivals, int(starts), EVAL_SEED, workers=CORES)

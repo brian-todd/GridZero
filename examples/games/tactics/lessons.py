@@ -81,6 +81,40 @@ class Lessons:
         """Return how many games."""
         return int(self.seed.size)
 
+    def only(self, index: int) -> Lessons:
+        """Return one game on its own, cheap to send to another process.
+
+        Parameters
+        ----------
+        index : int
+            Which game.
+
+        Returns
+        -------
+        Lessons
+            That game, as `lessons_of` returned it.
+        """
+        first, last = self.game_start[index], self.game_start[index + 1]
+        low, high = np.searchsorted(self.searched, [first, last])
+        start, end = self.plan_start[low], self.plan_start[high]
+        return Lessons(
+            self.seed[index : index + 1],
+            self.winner[index : index + 1],
+            self.rounds[index : index + 1],
+            self.game_start[index : index + 2] - first,
+            self.verb[first:last],
+            self.cell[first:last],
+            self.searched[low:high] - first,
+            self.value[low:high],
+            self.plan_start[low : high + 1] - start,
+            self.plan_tile[start:end],
+            self.plan_attack_first[start:end],
+            self.plan_work_verb[start:end],
+            self.plan_work_cell[start:end],
+            self.plan_visits[start:end],
+            self.plan_value[start:end],
+        )
+
     @staticmethod
     def join(parts: Sequence[Lessons]) -> Lessons:
         """Return the games of several lessons, in order of their seeds.

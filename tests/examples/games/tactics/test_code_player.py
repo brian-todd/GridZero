@@ -1,4 +1,5 @@
 import dataclasses
+import json
 
 import numpy as np
 import pytest
@@ -485,3 +486,30 @@ def test_it_plays_the_rivals_it_meets_without_error():
     records = series(GAME, [("code", player), ("greedy", GreedyPlayer())], 1, 0)
     assert len(records) == 2
     assert tally(records).draws == 0
+
+
+def test_saved_constants_load_the_same(tmp_path):
+    path = tmp_path / "fit.json"
+    HAND_PICKED.save(path)
+    assert CodeEvaluator.load(path) == HAND_PICKED
+
+
+def test_saved_constants_can_be_read_by_name(tmp_path):
+    path = tmp_path / "fit.json"
+    HAND_PICKED.save(path)
+    data = json.loads(path.read_text())
+    assert list(data["value"]) == list(VALUE_FEATURES)
+    assert list(data["prior"]) == list(MOVE_FEATURES)
+    assert data["value"]["clock"] == HAND_PICKED.value[VALUE_FEATURES.index("clock")]
+    assert data["prior"]["damage"] == HAND_PICKED.prior[MOVE_FEATURES.index("damage")]
+    assert data["intercept"] == HAND_PICKED.intercept
+
+
+def test_constants_of_other_features_refuse_to_load(tmp_path):
+    path = tmp_path / "fit.json"
+    HAND_PICKED.save(path)
+    data = json.loads(path.read_text())
+    del data["prior"]["damage"]
+    path.write_text(json.dumps(data))
+    with pytest.raises(KeyError, match="damage"):
+        CodeEvaluator.load(path)

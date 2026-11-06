@@ -9,21 +9,15 @@ from typing import NamedTuple
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.optimize import minimize
-from sklearn.linear_model import LogisticRegression
 
-from .code_player import MOVE_FEATURES, FittedEvaluator, move_features, value_features
+from examples.games.regression import correlation, fit_choices, fit_logistic, held_out
+
+from .code_player import FittedEvaluator, move_features, value_features
 from .game import InARow
 from .lessons import Lessons
 
 MIN_PLY = 4
 """The value is fit from this ply: earlier, agent A's value is flat (it fails the opening)."""
-HELD_OUT = 5
-"""One game in this many is kept out of the fit."""
-PRIOR_L2 = 1e-3
-"""The prior's ridge penalty per position."""
-VALUE_C = 10.0
-"""The value's inverse ridge penalty."""
 
 
 class FitScore(NamedTuple):
@@ -61,72 +55,12 @@ def fit(game: InARow, lessons: Lessons, seed: int) -> tuple[FittedEvaluator, Fit
         How it does on the games kept out.
     """
     test = held_out(lessons.game, seed)
-    weights, intercept, correlation = _fit_value(game, lessons, test)
+    weights, intercept, score_of_value = _fit_value(game, lessons, test)
     prior, moves = _fit_prior(game, lessons, test)
     evaluator = FittedEvaluator(weights, intercept, prior)
     agreement, regret = _prior_score(moves, lessons, test, prior)
-    return evaluator, FitScore(int((~test).sum()), int(test.sum()), correlation, agreement, regret)
-
-
-def held_out(games: NDArray[np.int64], seed: int) -> NDArray[np.bool_]:
-    """Return which rows' games are kept out of a fit: whole games, one in `HELD_OUT`.
-
-    Parameters
-    ----------
-    games : ndarray of int64, shape (n,)
-        The game of each row.
-    seed : int
-        Sets which games.
-
-    Returns
-    -------
-    ndarray of bool, shape (n,)
-        True on the rows kept out.
-    """
-    numbers = np.unique(games)
-    rng = np.random.default_rng(seed)
-    out = rng.choice(numbers, size=max(1, len(numbers) // HELD_OUT), replace=False)
-    return np.isin(games, out)
-
-
-def correlation(a: NDArray[np.float64], b: NDArray[np.float64]) -> float:
-    """Return the correlation of two series, shape (n,), 0 if there is none to measure.
-
-    Parameters
-    ----------
-    a, b : ndarray of float64, shape (n,)
-        The series.
-
-    Returns
-    -------
-    float
-        Their correlation; 0 if fewer than two rows, or either is constant.
-    """
-    if len(a) < 2 or a.std() == 0.0 or b.std() == 0.0:
-        return 0.0
-    return float(np.corrcoef(a, b)[0, 1])
-
-
-def fit_logistic(features: NDArray[np.float64], target: NDArray[np.float64]) -> LogisticRegression:
-    """Return a logistic regression of soft targets: a row of each class, weighted by the target.
-
-    Parameters
-    ----------
-    features : ndarray of float64, shape (n, n_features)
-        The features.
-    target : ndarray of float64, shape (n,)
-        The targets, in [0, 1].
-
-    Returns
-    -------
-    sklearn.linear_model.LogisticRegression
-        The model.
-    """
-    return LogisticRegression(C=VALUE_C, max_iter=2000).fit(
-        np.concatenate([features, features]),
-        np.concatenate([np.ones(len(target)), np.zeros(len(target))]),
-        sample_weight=np.concatenate([target, 1.0 - target]),
-    )
+    score = FitScore(int((~test).sum()), int(test.sum()), score_of_value, agreement, regret)
+    return evaluator, score
 
 
 def _fit_value(
@@ -173,23 +107,10 @@ def _fit_prior(
     position = np.cumsum(position)
     target = lessons.policy[position, columns]
     train = ~test[position]
-    x, y = features[train], target[train]
     rows = position[train]
     # The same positions kept, renumbered 0..: each one's moves stay contiguous.
     first = np.flatnonzero(np.r_[True, rows[1:] != rows[:-1]])
-    n_positions = len(first)
-
-    def loss(theta: NDArray[np.float64]) -> tuple[float, NDArray[np.float64]]:
-        logits = x @ theta
-        normal = np.logaddexp.reduceat(logits, first)
-        groups = np.repeat(np.arange(n_positions), np.diff(np.r_[first, len(x)]))
-        probability = np.exp(logits - normal[groups])
-        value = -(y * (logits - normal[groups])).sum() / n_positions
-        grad = ((probability - y)[:, None] * x).sum(axis=0) / n_positions
-        return value + PRIOR_L2 * float(theta @ theta), grad + 2.0 * PRIOR_L2 * theta
-
-    found = minimize(loss, np.zeros(len(MOVE_FEATURES)), jac=True, method="L-BFGS-B")
-    return tuple(float(w) for w in found.x), moves
+    return fit_choices(features[train], target[train], first), moves
 
 
 def _prior_score(

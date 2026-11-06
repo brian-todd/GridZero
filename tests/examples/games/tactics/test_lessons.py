@@ -169,3 +169,17 @@ def test_teach_stops_at_its_time_limit_and_keeps_what_finished(tmp_path):
 def test_an_action_of_lessons_is_an_action():
     _, action = next(positions_of(TINY, game_of(1), 0))
     assert isinstance(action, Action)
+
+
+def test_only_gives_a_game_back_as_it_was_played():
+    parts = [game_of(7), game_of(8), game_of(9)]
+    joined = Lessons.join(parts)
+    for i, part in enumerate(parts):
+        assert same(joined.only(i), part)
+
+
+def test_only_replays_alone():
+    joined = Lessons.join([game_of(7), game_of(8)])
+    alone = list(positions_of(TINY, joined.only(1), 0))
+    together = list(positions_of(TINY, joined, 1))
+    assert [action for _, action in alone] == [action for _, action in together]

@@ -26,7 +26,8 @@ from examples.games.in_a_row import (
     InARow,
     Lessons,
 )
-from examples.games.tactics import Tactics
+from examples.games.tactics import Lessons as TacticsLessons
+from examples.games.tactics import SearchPlayer, Tactics, lessons_of, small_rules
 from examples.games.voronoi import EVAL_SEED as VORONOI_SEED
 from examples.games.voronoi import Greedy, Voronoi
 from examples.simulations.biomes import Biomes
@@ -180,10 +181,35 @@ def test_tactics_code_games_refuses_a_prefix_already_used(capsys, tmp_path):
 
 
 def test_tactics_code_ladder(capsys):
-    out = ran(capsys, "tactics.code_ladder", 1, 15, 1)
+    out = ran(capsys, "tactics.code_ladder", "hand", 1, 15, 1)
     assert "1 simulations: " in out
     assert "Against random " in out
     assert ", greedy " in out
+
+
+def test_tactics_code_fit_saves_constants_the_ladder_plays(capsys, tmp_path):
+    game = small_rules()
+    teacher = SearchPlayer(simulations=2, plans=2, depth=1, rollout_turns=1)
+    path = tmp_path / "games_lessons.npz"
+    games = [lessons_of(game, teacher, seed) for seed in range(3)]
+    TacticsLessons.join(games).save(path)
+    out = ran(capsys, "tactics.code_fit", tmp_path / "code", path)
+    assert "Value on 1 games kept out" in out
+    assert "Prior on 1 games kept out" in out
+    saved = tmp_path / "code_fit.json"
+    assert set(json.loads(saved.read_text())) == {"value", "intercept", "prior"}
+    assert "Against random " in ran(capsys, "tactics.code_ladder", saved, 1, 15, 1)
+
+
+def test_tactics_code_fit_refuses_a_prefix_already_used(capsys, tmp_path):
+    (tmp_path / "code_fit.json").write_text("")
+    with pytest.raises(FileExistsError, match="has been used"):
+        ran(capsys, "tactics.code_fit", tmp_path / "code", "lessons.npz")
+
+
+def test_tactics_code_fit_needs_lessons(capsys, tmp_path):
+    with pytest.raises(ValueError, match="lessons"):
+        ran(capsys, "tactics.code_fit", tmp_path / "code")
 
 
 @pytest.mark.slow

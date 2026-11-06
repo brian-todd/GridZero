@@ -17,6 +17,7 @@ from typing import NamedTuple
 import numpy as np
 from numpy.typing import NDArray
 
+from examples.games.regression import correlation, fit_logistic, held_out
 from gridzero.agents import Evaluator
 from gridzero.agents.exact import solve
 
@@ -29,7 +30,6 @@ from .code_player import (
     threat_cells,
     value_features,
 )
-from .fit import correlation, fit_logistic, held_out
 from .game import PLACE, InARow
 from .lessons import Lessons, judge, position_of
 from .state import InARowPosition
