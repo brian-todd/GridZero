@@ -972,3 +972,21 @@ def test_tactics_shows_players_the_whole_position():
     assert TINY.view(position, 0) is position
     assert TINY.view(position, 1) is position
     assert TINY.n_players == 2
+
+
+def test_writing_to_the_legal_mask_cannot_change_what_is_legal():
+    position = TINY.start(1)
+    mask = TINY.legal(position)
+    verb, cell = np.argwhere(mask)[0]
+    mask[:] = False
+    assert TINY.legal(position)[verb, cell]
+    TINY.step(position, (int(verb), int(cell)))
+
+
+def test_a_decisions_targets_cannot_be_written(make_battle, at):
+    position = make_battle([piece(1, 1, FOOT, 0), piece(1, 2, FOOT, 1)])
+    turn = SMALL._turn(position)
+    for verb in (Verb.MOVE, Verb.ATTACK, Verb.SWAP, Verb.END, Verb.DEFER):
+        assert not turn.targets(verb).flags.writeable
+    assert turn.targets(Verb.END) is turn.targets(Verb.END)
+    assert turn.targets(Verb.END)[at(1, 1)]

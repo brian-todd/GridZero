@@ -5,6 +5,13 @@
 and ``step`` makes the next position from any position and one action. Each step is one
 decision: placing a unit, or one action of the acting unit's turn. It is a `game.Game`, so
 `game.play` and `game.series` play it.
+
+Every search spends most of its time here and in the players, so these modules write NumPy for
+speed: ``mask.nonzero()[0]`` for ``np.flatnonzero(mask)`` on a 1-D mask, and methods such as
+``x.any()`` for ``np.any(x)``, which goes through a Python wrapper. What depends only on the space
+or an offset is cached (`_near_graph`, `_snap`), and what a decision needs twice is worked out once
+(`_Turn.targets`). None of this changes a rule, and ``test_play_unchanged`` pins that it doesn't
+change a game.
 """
 
 import functools
@@ -402,7 +409,7 @@ class Tactics:
         facing = (u.facing + 3 * team) % 6  # the frame turns half a turn for team 1
         full_hp = np.array([stats.hp for stats in self.units] + [1])  # kind -1 indexes the last
         watched_by = np.zeros((2, state.n_cells), dtype=np.bool_)
-        archers = np.flatnonzero(present & (u.watch >= 0))
+        archers = (present & (u.watch >= 0)).nonzero()[0]
         for archer in archers:
             watched_by[int(u.team[archer] != team), u.watch[archer]] = True
         active = np.zeros(state.n_cells, dtype=np.bool_)
@@ -511,7 +518,9 @@ class Tactics:
         if not position.over:  # each phase has its own verbs, and the others are never legal
             verbs = range(Verb.PLACE, self.n_verbs) if position.deploying else range(Verb.PLACE)
             for verb in verbs:
-                mask[verb] = turn.targets(verb)
+                targets = turn.targets(verb)
+                if targets is not turn.none:
+                    mask[verb] = targets
         return mask
 
     def step(
@@ -663,7 +672,7 @@ class Tactics:
         """Finish a step: the end of the game, of the round, or of the acting unit's turn."""
         ply, round_ = position.ply + 1, position.round
         alive = work.kind >= 0
-        sides = [bool(np.any(alive & (work.team == team))) for team in (0, 1)]
+        sides = [bool((alive & (work.team == team)).any()) for team in (0, 1)]
         if not all(sides):
             winner = 0 if sides[0] else 1
             work.events.append(GameOver(winner, "killed"))
@@ -714,9 +723,11 @@ class Tactics:
     def _move(self, work: _Work, state: TacticsState, a: int, goal: int, dice: Context) -> None:
         """Walk the acting unit to ``goal``, tile by tile, springing deferred attacks."""
         space = state.space
-        cost = np.ones(space.n_cells)
+        cost = None
         enemy = (work.kind >= 0) & (work.team != work.team[a]) & (work.watch >= 0)
-        cost[work.watch[enemy]] += _WATCHED
+        if enemy.any():
+            cost = np.ones(space.n_cells)
+            cost[work.watch[enemy]] += _WATCHED
         route = path(space, a, goal, cost=cost, blocked=~state.passable | (work.kind >= 0))
         coords = space.unravel(route)
         facing = int(work.facing[a])
@@ -727,7 +738,8 @@ class Tactics:
             work.units.move(here, there)
             work.moved[there] += 1
             if self.turn_on_move:
-                work.facing[there] = snap(space, coords[k] - coords[k - 1], work.facing[there])
+                dq, dr = (coords[k] - coords[k - 1]).tolist()
+                work.facing[there] = _snap(space, dq, dr, int(work.facing[there]))
             if self._watched(work, there):
                 work.events.append(Moved(uid, tuple(int(c) for c in route[start : k + 1])))
                 start = k
@@ -736,7 +748,8 @@ class Tactics:
         if start < route.size - 1:
             work.events.append(Moved(uid, tuple(int(c) for c in route[start:])))
         if self.turn_on_move:
-            work.facing[goal] = snap(space, coords[-1] - coords[0], facing)
+            dq, dr = (coords[-1] - coords[0]).tolist()
+            work.facing[goal] = _snap(space, dq, dr, facing)
         work.faced[goal] = False
 
     def _swap(self, work: _Work, state: TacticsState, a: int, b: int, dice: Context) -> None:
@@ -772,7 +785,7 @@ class Tactics:
     def _watchers(self, work: _Work, cell: int) -> NDArray[np.intp]:
         """Return the cells of the enemy archers watching ``cell``, in order of id."""
         team = work.team[cell]
-        return np.flatnonzero((work.watch == cell) & (work.kind >= 0) & (work.team != team))
+        return ((work.watch == cell) & (work.kind >= 0) & (work.team != team)).nonzero()[0]
 
     def _watched(self, work: _Work, cell: int) -> bool:
         """Return whether enemies of the unit on ``cell`` watch it."""
@@ -866,8 +879,11 @@ class Tactics:
         self, space: LatticeSpace, kind: NDArray[np.int8], team: NDArray[np.int8], cell: int
     ) -> int:
         """Return the aura bonus of the unit at ``cell``: given by a friend within reach, or 0."""
-        near = np.append(_near(space, cell, self.aura_radius), cell)
-        givers = self._flags["aura"][kind[near]] & (team[near] == team[cell])
+        aura = self._flags["aura"]
+        if aura[kind[cell]]:  # it counts its own
+            return self.aura_bonus
+        near = _near(space, cell, self.aura_radius)
+        givers = aura[kind[near]] & (team[near] == team[cell])
         return self.aura_bonus if givers.any() else 0
 
     def _first_facing(self, space: LatticeSpace, cell: int) -> int:
@@ -903,19 +919,45 @@ class Tactics:
         return turn
 
 
+@functools.cache
+def _near_graph(space: LatticeSpace, radius: float) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
+    """Return the CSR rows and neighbors of the space's graph for a radius.
+
+    `LatticeSpace.radius_graph` checks its radius on every call: cached here for the hot paths,
+    for as long as the process runs, like `board.board_space`. Both are int64.
+    """
+    graph = space.radius_graph(radius)
+    return graph.indptr, graph.indices
+
+
+@functools.cache
+def _snap(space: LatticeSpace, dq: int, dr: int, previous: int) -> int:
+    """Return `core.snap` of the lattice offset ``(dq, dr)``, cached: it depends on nothing else.
+
+    Plain ints, so that they can be a key. Few offsets occur, so the cache stays small.
+    """
+    return snap(space, (dq, dr), previous)
+
+
 def _near(space: LatticeSpace, cell: int, radius: float) -> NDArray[np.int64]:
     """Return the cells within ``radius`` of ``cell``, as `within` finds them, but not ``cell``.
 
     Looked up in the graph the space keeps for the radius: shape (n,), int64, ascending.
     """
-    graph = space.radius_graph(radius)
-    return graph.indices[graph.indptr[cell] : graph.indptr[cell + 1]]
+    indptr, indices = _near_graph(space, radius)
+    return indices[indptr[cell] : indptr[cell + 1]]
+
+
+@functools.cache
+def _none(n_cells: int) -> NDArray[np.bool_]:
+    """Return a mask of no cells, shared and read-only: shape (n_cells,), bool."""
+    return read_only(np.zeros(n_cells, dtype=np.bool_))
 
 
 def _first(initiative: NDArray[np.int16], mask: NDArray[np.bool_]) -> int:
     """Return the cell in ``mask`` with the lowest initiative."""
-    cells = np.flatnonzero(mask)
-    return int(cells[np.argmin(initiative[cells])])
+    cells = mask.nonzero()[0]
+    return int(cells[initiative[cells].argmin()])
 
 
 class _Turn:
@@ -926,7 +968,8 @@ class _Turn:
         self.position = position
         self.state = state = position.state
         units = state.units
-        self.none = read_only(np.zeros(state.n_cells, dtype=np.bool_))  # returned as it is
+        self.none = _none(state.n_cells)  # returned as it is
+        self._targets: dict[int, NDArray[np.bool_]] = {}
         if position.deploying:
             self.active = -1
             self.team = int(np.count_nonzero(state.occupied)) % 2
@@ -969,7 +1012,7 @@ class _Turn:
         # arc, so only a tile between two arcs can cut anything off. Most tiles need no search.
         around = np.append(state.passable, False)[rings(self.game.shape)[tiles]]
         arcs = np.count_nonzero(around & ~around[:, [1, 2, 3, 4, 5, 0]], axis=1)
-        anchors = np.flatnonzero(state.occupied | state.point)
+        anchors = (state.occupied | state.point).nonzero()[0]
         for tile in tiles[arcs > 1]:
             open_ = state.passable.copy()
             open_[tile] = False
@@ -990,7 +1033,19 @@ class _Turn:
         return not units.attacked[a] and not (stats.double_move and units.moved[a] > stats.move)
 
     def targets(self, verb: int) -> NDArray[np.bool_]:
-        """Return where an action with ``verb`` is legal: shape (n_cells,), bool."""
+        """Return where an action with ``verb`` is legal: shape (n_cells,), bool, read-only.
+
+        Worked out once a decision, so `Tactics.step` needn't repeat what `Tactics.legal` found.
+        """
+        known = self._targets.get(verb)
+        if known is None:
+            known = self._find_targets(verb)
+            known.setflags(write=False)
+            self._targets[verb] = known
+        return known
+
+    def _find_targets(self, verb: int) -> NDArray[np.bool_]:
+        """Work out `targets`: ``self.none`` if there are none, which a verb must copy to write."""
         game, state, a = self.game, self.state, self.active
         if self.position.over or not 0 <= verb < game.n_verbs:
             return self.none
@@ -1004,7 +1059,7 @@ class _Turn:
                 return self.none
             return (state.home == self.team) & state.passable & ~state.occupied
         units = state.units
-        mask = self.none.copy()
+        mask = self.none
         if verb == Verb.MOVE:
             left = self.movement_left()
             if left > 0:
@@ -1024,16 +1079,20 @@ class _Turn:
         elif verb == Verb.BREAK:
             if self.stats.builds and self.can_attack():
                 near = _near(state.space, a, 1.0)
+                mask = self.none.copy()
                 mask[near] = ~state.passable[near] & ~state.point[near]
         elif verb == Verb.SWAP:
             if units.moved[a] == 0 and not units.swapped[a]:
                 near = _near(state.space, a, 1.0)
                 ok = (units.team[near] == self.team) & (units.moved[near] == 0)
+                mask = self.none.copy()
                 mask[near] = ok & ~units.swapped[near]
         elif verb == Verb.END:
+            mask = self.none.copy()
             mask[a] = True
         elif verb < Verb.END:  # Verb.FACE + d
             if game.free_facing and not units.faced[a] and units.facing[a] != verb - Verb.FACE:
+                mask = self.none.copy()
                 mask[a] = True
         return mask
 

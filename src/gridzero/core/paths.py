@@ -262,8 +262,8 @@ def hops(
     j = space._face_dim(kind)
     coords = space.coords
     moved = coords[b] - coords[a]  # broadcasts a against b
-    lengths, wraps = np.array(space.shape, dtype=np.int64), np.array(space.periodic)
     if space.tiling == "hypercubic":
+        lengths, wraps = np.array(space.shape, dtype=np.int64), np.array(space.periodic)
         # A move changes up to dim - j coordinates by 1 each.
         moved = np.where(wraps, moved % lengths, np.abs(moved))
         moved = np.where(wraps, np.minimum(moved, lengths - moved), moved)
@@ -273,6 +273,7 @@ def hops(
     types = space._types[a]
     at = base[types] + moved
     if any(space.periodic):
+        lengths, wraps = np.array(space.shape, dtype=np.int64), np.array(space.periodic)
         at = np.where(wraps, at % lengths, at)
     return table[types, at[..., 0], at[..., 1]]  # hexes and triangles are 2-D
 

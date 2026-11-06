@@ -759,3 +759,26 @@ def test_corners_are_cached_and_read_only():
 def test_corners_need_a_2d_lattice(shape):
     with pytest.raises(ValueError, match="2-D"):
         LatticeSpace(shape).corners()
+
+
+@pytest.mark.parametrize(
+    ("ids", "shape"),
+    [(5, (2,)), (np.array(5), (2,)), ([1, 2], (2, 2)), ([[1], [2]], (2, 1, 2)), ([], (0, 2))],
+)
+def test_unravel_gives_a_new_writable_array_of_coordinates(ids, shape):
+    space = LatticeSpace((4, 5), tiling="hex", periodic=False)
+    coords = space.unravel(np.asarray(ids, dtype=np.int64))
+    assert coords.shape == shape
+    assert coords.dtype == np.int64
+    coords[...] = -1  # writing to it leaves the space's own coordinates alone
+    assert space.coords.min() >= 0
+    if coords.size:
+        expected = np.stack(np.unravel_index(np.asarray(ids), space.shape), axis=-1)
+        assert space.unravel(np.asarray(ids)).tolist() == expected.tolist()
+
+
+def test_a_boolean_kind_raises_even_after_its_integer_was_asked_for():
+    space = LatticeSpace((4, 5), tiling="hex", periodic=False)
+    assert space._face_dim(1) == space._face_dim(1)
+    with pytest.raises(TypeError):
+        space._face_dim(True)

@@ -253,6 +253,17 @@ def pull(x: NDArray[np.float32], op: NeighborOperator) -> NDArray[np.float32]:
     8), so `pull` keeps `S @ x.T`.
   - **SciPy sparse products overflow to inf silently,** even under `np.errstate(over="raise")`.
     Check their results when values can be huge.
+- **A game step in Python** (Tactics, 2026-11-06, i9-12900K, one pinned core, 15x15 to 25x25):
+  `step` about 85 us and `legal` about 50 us, nearly the same at both sizes, and spread over many
+  small calls, so no single fix helps much. Together, these small changes gave 12-18%, playing the
+  same games: reuse what `legal` found in `step`; cache what depends only on the space or an offset;
+  `x.nonzero()[0]` and methods such as `x.any()` and `x.argmin()`
+  instead of NumPy's Python wrappers (about 3%, and only on 1-D masks: `nonzero()[0]` of a 2-D
+  array quietly gives its first axis). Neither a higher GC threshold nor CPython's JIT helped (the
+  JIT ran 7-14% slower).
+- **Cores:** throughput of greedy games at 8, 16 and 24 processes was 7.4x, 10.3x and 11.3x one
+  process, and of a Numba kernel 8.1x, 11.5x and 13.2x: past the 8 performance cores it is the
+  chip, not Python. Use every core, and expect each process to run at about half its pinned speed.
 - **Searches** (`steps`, `reach`, `path`; 200x200 hexes, 40k cells): SciPy's `dijkstra` and a
   Numba binary heap tie on a whole weighted search (2.8 against 2.6 ms). Numba wins where
   searches stop early or need no heap: a budget of 5 moves in 12-18 µs against 250-290 µs, a

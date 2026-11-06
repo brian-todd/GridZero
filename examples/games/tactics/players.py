@@ -170,7 +170,7 @@ class GreedyPlayer:
         kind = min(wanted or legal_kinds, key=lambda k: _deploy_rank(game, k))
         stats = game.units[kind]
         row = 2 if stats.reach > 1 else 1 if stats.aura else 0
-        cells = np.flatnonzero(legal[Verb.PLACE + kind])
+        cells = legal[Verb.PLACE + kind].nonzero()[0]
         corner = home_corners(space)[1 - player]
         dist = hops(space, cells, corner)
         score = -np.abs(dist - (dist.min() + row)).astype(np.float64)
@@ -188,7 +188,7 @@ class GreedyPlayer:
         now_value, now_target = -np.inf, -1
         if legal[Verb.ATTACK].any():
             now_value, now_target = self._best_attack(
-                game, position, a, a, np.flatnonzero(legal[Verb.ATTACK])
+                game, position, a, a, legal[Verb.ATTACK].nonzero()[0]
             )
         best, best_attack = a, -np.inf
         if legal[Verb.MOVE].any() and position.state.units.moved[a] == 0:
@@ -216,8 +216,8 @@ class GreedyPlayer:
         state = position.state
         u = state.units
         me = game.units[u.kind[a]]
-        enemies = np.flatnonzero(state.occupied & (u.team != u.team[a]))
-        cells = np.append(np.flatnonzero(legal[Verb.MOVE]), a)
+        enemies = (state.occupied & (u.team != u.team[a])).nonzero()[0]
+        cells = np.append(legal[Verb.MOVE].nonzero()[0], a)
         score = self._tile_scores(game, position, a, cells)
         attacks = np.full(cells.size, -np.inf)
         if not u.attacked[a] and enemies.size:
@@ -226,7 +226,7 @@ class GreedyPlayer:
             seen = sight(state.space, enemies, state.wall, me.reach, separate=True)[:, cells]
             if me.double_move:  # a knight moving past its move can't attack
                 seen[:, hops(state.space, cells, a) > me.move] = False
-            for i in np.flatnonzero(seen.any(axis=0)):
+            for i in (seen.any(axis=0)).nonzero()[0]:
                 targets = enemies[seen[:, i]]
                 attacks[i] = self._best_attack(game, position, a, int(cells[i]), targets)[0]
         return cells, score, attacks
@@ -246,9 +246,9 @@ class GreedyPlayer:
         if work is not None:
             return work
         xy = state.space.coords
-        enemies = np.flatnonzero(state.occupied & (u.team != u.team[a]))
+        enemies = (state.occupied & (u.team != u.team[a])).nonzero()[0]
         if legal[Verb.DEFER].any() and enemies.size:
-            tiles = np.flatnonzero(legal[Verb.DEFER])
+            tiles = legal[Verb.DEFER].nonzero()[0]
             for tile in tiles[state.point[tiles] & ~state.occupied[tiles]]:
                 walk = [_walk_range(game, int(k)) for k in u.kind[enemies]]
                 if (hops(state.space, enemies, tile) <= walk).any():
@@ -273,7 +273,7 @@ class GreedyPlayer:
         walks = _Walks(game, state, team)
         best, action = 0.0, None
         for verb in (Verb.BUILD, Verb.BREAK):
-            for tile in np.flatnonzero(legal[verb]):
+            for tile in legal[verb].nonzero()[0]:
                 value = self.work * walks.gain(int(tile), verb == Verb.BUILD)
                 if value > best:
                     best, action = value, Action(verb, int(tile))
@@ -305,8 +305,8 @@ class GreedyPlayer:
         u = state.units
         me = game.units[u.kind[a]]
         team = u.team[a]
-        enemies = np.flatnonzero(state.occupied & (u.team != team))
-        friends = np.flatnonzero(state.occupied & (u.team == team))
+        enemies = (state.occupied & (u.team != team)).nonzero()[0]
+        friends = (state.occupied & (u.team == team)).nonzero()[0]
         friends = friends[friends != a]
         score = np.zeros(cells.size)
         if enemies.size:
@@ -346,9 +346,9 @@ class _Walks:
         self.game, self.state, self.team = game, state, team
         self.space = state.space
         u = state.units
-        self.point = np.flatnonzero(state.point)
-        self.friends = np.flatnonzero(state.occupied & (u.team == team))
-        self.enemies = np.flatnonzero(state.occupied & (u.team != team))
+        self.point = state.point.nonzero()[0]
+        self.friends = (state.occupied & (u.team == team)).nonzero()[0]
+        self.enemies = (state.occupied & (u.team != team)).nonzero()[0]
         self.blocked = ~state.passable
 
     @functools.cached_property
@@ -438,7 +438,7 @@ class SitterPlayer:
             return self.greedy(game, player, position, legal, rng)
         a = game.active(position)
         if legal[Verb.ATTACK].any():
-            targets = np.flatnonzero(legal[Verb.ATTACK])
+            targets = legal[Verb.ATTACK].nonzero()[0]
             return Action(Verb.ATTACK, self.greedy._best_attack(game, position, a, a, targets)[1])
         return Action(Verb.END, a)
 
@@ -462,5 +462,5 @@ def _threat_range(game: Tactics, kind: int) -> int:
 
 def _argmax(score: NDArray[np.float64], rng: np.random.Generator) -> int:
     """Return the index of the highest score, ties broken at random."""
-    best = np.flatnonzero(score == score.max())
+    best = (score == score.max()).nonzero()[0]
     return int(best[rng.integers(best.size)]) if best.size > 1 else int(best[0])

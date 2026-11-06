@@ -369,7 +369,7 @@ def check_ids(values: ArrayLike, n_cells: int, name: str) -> NDArray[np.int64]:
         If an id is outside ``[0, n_cells)``. Negative ids are not counted from the end.
     """
     ids = int_array(values, name)
-    if np.any((ids < 0) | (ids >= n_cells)):
+    if ((ids < 0) | (ids >= n_cells)).any():
         raise IndexError(f"{name} must hold cell ids in [0, {n_cells})")
     return ids
 

@@ -332,6 +332,7 @@ class LatticeSpace:
     _near: RadiusCache[tuple[NDArray[np.int64], NDArray[np.float64]]] = field(repr=False)
     _reaches: RadiusCache[NDArray[np.int64]] = field(repr=False)
     _hops: dict[int, tuple[NDArray[np.int64], NDArray[np.int64]]] = field(repr=False)
+    _face_dims: dict[str | int, int] = field(repr=False)
     _radius_graphs: RadiusCache[CellGraph] = field(repr=False)
     _tiling: _Tiling = field(repr=False)
 
@@ -370,6 +371,7 @@ class LatticeSpace:
         set_(self, "_near", RadiusCache())
         set_(self, "_reaches", RadiusCache())
         set_(self, "_hops", {})
+        set_(self, "_face_dims", {})
         set_(self, "_radius_graphs", RadiusCache())
         set_(self, "_tiling", record)
 
@@ -470,7 +472,7 @@ class LatticeSpace:
         IndexError
             If an id is outside ``[0, n_cells)``.
         """
-        return np.stack(np.unravel_index(check_ids(ids, self.n_cells, "ids"), self.shape), axis=-1)
+        return self.coords[check_ids(ids, self.n_cells, "ids")]
 
     def ravel(self, coords: ArrayLike) -> NDArray[np.int64]:
         """Convert lattice coordinates to flat cell ids.
@@ -881,9 +883,16 @@ class LatticeSpace:
 
         Kinds that keep the same neighbors give the same dimension, so they share a graph.
         """
+        plain = type(kind) is str or type(kind) is int  # True hashes as 1, and must still raise
+        known = self._face_dims.get(kind) if plain else None
+        if known is not None:
+            return known
         j = min_face_dim(kind, self.dim)
         _, faces = self._neighbors
-        return int(faces[faces >= j].min())
+        dim = int(faces[faces >= j].min())
+        if plain:
+            self._face_dims[kind] = dim
+        return dim
 
     def radius_graph(self, radius: float) -> CellGraph:
         """Return the symmetric graph of cells whose centers lie within ``radius`` of each other.

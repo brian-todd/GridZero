@@ -205,9 +205,7 @@ class SearchPlayer:
             for c, s, t in zip(cells, score, attacks, strict=True)
         ]
         if legal[Verb.ATTACK].any():
-            now, _ = self.greedy._best_attack(
-                game, position, a, a, np.flatnonzero(legal[Verb.ATTACK])
-            )
+            now, _ = self.greedy._best_attack(game, position, a, a, legal[Verb.ATTACK].nonzero()[0])
             scored += [
                 (Plan(int(c), True), float(s + now))
                 for c, s in zip(cells, score, strict=True)
@@ -363,9 +361,7 @@ class SearchPlayer:
         self, game: Tactics, position: TacticsPosition, legal: NDArray[np.bool_], a: int
     ) -> Action:
         """Return the greedy's best attack among the legal ones."""
-        _, target = self.greedy._best_attack(
-            game, position, a, a, np.flatnonzero(legal[Verb.ATTACK])
-        )
+        _, target = self.greedy._best_attack(game, position, a, a, legal[Verb.ATTACK].nonzero()[0])
         return Action(Verb.ATTACK, target)
 
     def _evaluate(
@@ -428,7 +424,7 @@ def material(game: Tactics, position: TacticsPosition) -> float:
         ``m0 / (m0 + m1)``, 0.5 when both sides have the same, or when neither has any.
     """
     u = position.state.units
-    cells = np.flatnonzero(position.state.occupied)
+    cells = position.state.occupied.nonzero()[0]
     worth = np.array([game.units[k].hp + game.units[k].atk for k in range(len(game.units))])
     full = np.array([game.units[k].hp for k in range(len(game.units))])
     kind = u.kind[cells]
