@@ -27,16 +27,18 @@ EVAL_SEED = 2_000_000
 def small_rules() -> Tactics:
     """Return the rules for quick games: the default team and caps, on a 15x15 board.
 
-    Chosen with greedy players (2026-11-05) to end as the full board does, 38% of games by holding
-    and 62% by killing, in 5.2 rounds and about 176 decisions. On 9x9, 97% to 100% end by killing,
-    in 3 rounds, and the objective hardly matters.
+    Chosen with greedy players (2026-11-09) for the most games ended by holding without the first
+    capturer winning nearly all of them: 25% by holding, in 5.5 rounds and about 184 decisions, the
+    first capturer winning 65%. Holding 4 rounds, as on the full board, ended 5% of games there; 2
+    rounds ended 47-64%, the first capturer winning 70-80%. On 9x9, 97% to 100% end by killing
+    (2026-11-05), and the objective hardly matters.
 
     Returns
     -------
     Tactics
-        The rules: 4 rounds to hold, a deadline at round 8 and a cap at round 16.
+        The rules: homes 3 rows deep, 3 rounds to hold, a deadline at round 8 and a cap at round 16.
     """
-    return Tactics(shape=(15, 15), home_depth=4, hold_rounds=4, capture_by=8, max_rounds=16)
+    return Tactics(shape=(15, 15), home_depth=3, hold_rounds=3, capture_by=8, max_rounds=16)
 
 
 def earlier_rules() -> Tactics:

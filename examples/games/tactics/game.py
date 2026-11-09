@@ -519,6 +519,38 @@ class Tactics:
         out = np.stack(rows).astype(np.float32)
         return out[:, state.space.opposite()] if team == 1 else out
 
+    @property
+    def revealed(self) -> tuple[str, ...]:
+        """The planes of `reveal`: those of `planes`, since nothing is hidden."""
+        return self.planes
+
+    def reveal(self, position: TacticsPosition, team: SupportsIndex, /) -> NDArray[np.float32]:
+        """Return the whole position as a team sees it: its observation (`agents.Revealable`).
+
+        The game hides nothing, so a learned model's belief (`agents.muzero_net.WorldNet`) learns
+        to read the board back from its latent states, those it unrolls through its dynamics too.
+
+        Parameters
+        ----------
+        position : TacticsPosition
+            A position of this game.
+        team : int
+            0 or 1: the player.
+
+        Returns
+        -------
+        ndarray of float32, shape (len(planes), n_cells)
+            ``observe(position, team)``.
+
+        Raises
+        ------
+        TypeError
+            If ``team`` is not an integer.
+        ValueError
+            If ``team`` is neither 0 nor 1, or the position is not on this game's board.
+        """
+        return self.observe(position, team)
+
     def frame(self, team: SupportsIndex, /) -> Frame:
         """Return a team's frame, where `observe` shows the board to it (`agents.frame.Frame`).
 

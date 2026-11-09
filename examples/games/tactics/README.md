@@ -60,7 +60,8 @@ boards are symmetric under the half turn (`make_board`), and team 1 sees the boa
 turn, so a network plays both sides the same way. `earlier_rules()` gives the rules before
 2026-11-09 (knights with Atk 3, a double move and a place each, no wall, hold 5, turns shuffled
 every round, engaged until the round ends), which the findings below dated earlier were found
-under.
+under. `small_rules()` gives quick games on a 15x15 board, with homes 3 rows deep and 3 rounds to
+hold: at 4, greedy players ended only 5% of games there by holding, at 3 a quarter.
 
 ## Players
 
