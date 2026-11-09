@@ -22,6 +22,7 @@ from examples.games import CORES
 from examples.games.tactics import (
     EVAL_SEED,
     HAND_PICKED,
+    SEARCH_C_SCALE,
     CodeEvaluator,
     GreedyPlayer,
     RandomPlayer,
@@ -80,7 +81,10 @@ def main(
     }
     chosen = {name: known[name] for name in rivals or ("random", "greedy")}
     seed = first_start(int(replica))
-    a_simulation = _cost(game, AlphaZeroPlayer(evaluator, simulations=TIMED_AT)) / TIMED_AT
+    a_simulation = (
+        _cost(game, AlphaZeroPlayer(evaluator, simulations=TIMED_AT, c_scale=SEARCH_C_SCALE))
+        / TIMED_AT
+    )
     print(f"Code player: {a_simulation * 1e6:.0f} us a simulation.", flush=True)
     for budget in budgets.split(","):
         if budget == "equal":
@@ -89,7 +93,7 @@ def main(
             simulations = max(1, round(a_decision / a_simulation))
         else:
             simulations = int(budget)
-        player = AlphaZeroPlayer(evaluator, simulations=simulations)
+        player = AlphaZeroPlayer(evaluator, simulations=simulations, c_scale=SEARCH_C_SCALE)
         print(f"{simulations} simulations: {_cost(game, player) * 1e3:.1f} ms.", flush=True)
         start = time.perf_counter()
         scores = ladder(game, player, chosen, int(starts), seed, workers=CORES)

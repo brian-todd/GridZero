@@ -23,9 +23,10 @@ ThreatPlayer
 
 Code players
 ------------
-LineEvaluator, SEARCH_ALONE, open_lines
+LineEvaluator, SEARCH_ALONE, SEARCH_C_SCALE, open_lines
     Evaluators written as code for `agents.AlphaZeroPlayer`: open lines and the middle
-    column, the search with no knowledge, and the lines each player keeps open.
+    column, the search with no knowledge, the value weight code players search with, and the
+    lines each player keeps open.
 FittedEvaluator, value_features, move_features, VALUE_FEATURES, MOVE_FEATURES
     An evaluator of named features and fitted constants, and those features.
 threat_cells, clean_threats
@@ -51,6 +52,7 @@ board_text, STONES
 from examples.games.in_a_row.code_player import (
     MOVE_FEATURES,
     SEARCH_ALONE,
+    SEARCH_C_SCALE,
     VALUE_FEATURES,
     FittedEvaluator,
     LineEvaluator,
@@ -78,6 +80,7 @@ __all__ = [
     "MOVE_FEATURES",
     "PLACE",
     "SEARCH_ALONE",
+    "SEARCH_C_SCALE",
     "STONES",
     "VALUE_FEATURES",
     "FittedEvaluator",

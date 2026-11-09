@@ -40,6 +40,7 @@ from examples.games import CORES
 from examples.games.tactics import (
     EVAL_SEED,
     HAND_PICKED,
+    SEARCH_C_SCALE,
     CodeEvaluator,
     Fielded,
     GreedyPlayer,
@@ -469,7 +470,7 @@ def main(
     free: TacticsPlayer | None = None
     if weights != "greedy":
         evaluator = HAND_PICKED if weights == "hand" else CodeEvaluator.load(weights)
-        free = AlphaZeroPlayer(evaluator, simulations=int(simulations))
+        free = AlphaZeroPlayer(evaluator, simulations=int(simulations), c_scale=SEARCH_C_SCALE)
         make = code_fielding(free)
     report: Report = {
         "starts": n,

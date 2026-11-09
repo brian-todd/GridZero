@@ -21,6 +21,7 @@ from examples.games.in_a_row import (
     EVAL_SEED,
     MOVE_FEATURES,
     SEARCH_ALONE,
+    SEARCH_C_SCALE,
     VALUE_FEATURES,
     FittedEvaluator,
     InARow,
@@ -122,7 +123,9 @@ def _agent(
     evaluator: Evaluator[InARow, InARowPosition], simulations: int
 ) -> AlphaZeroPlayer[InARow, InARowPosition]:
     """Return a search player that draws noise: the start is fixed, so games would repeat."""
-    return AlphaZeroPlayer(evaluator, simulations=simulations, considered=7, noise=True)
+    return AlphaZeroPlayer(
+        evaluator, simulations=simulations, considered=7, noise=True, c_scale=SEARCH_C_SCALE
+    )
 
 
 def _games(

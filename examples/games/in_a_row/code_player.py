@@ -127,6 +127,10 @@ class LineEvaluator:
 SEARCH_ALONE = LineEvaluator((0.0, 0.0, 0.0), center=0.0)
 """The search with no knowledge of four in a row but its rules: the baseline of code players."""
 
+SEARCH_C_SCALE = 0.1
+"""The value weight (`agents.AlphaZeroPlayer`'s ``c_scale``) of code players' searches, and of those
+they are laddered against: they were fit and measured at 0.1, the default until 2026-11-09."""
+
 
 VALUE_FEATURES = (
     "open_one",

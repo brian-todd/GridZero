@@ -23,6 +23,7 @@ from examples.games.in_a_row import (
     EVAL_SEED,
     FIRST_MOVES,
     SEARCH_ALONE,
+    SEARCH_C_SCALE,
     FittedEvaluator,
     InARow,
     InARowPosition,
@@ -72,7 +73,9 @@ def main(weights: str, fit: str, starts: str = "50", *simulations: str) -> None:
         )
     costs = {}
     for name, evaluator in evaluators.items():
-        costs[name] = _cost(game, AlphaZeroPlayer(evaluator, simulations=64, considered=7))
+        costs[name] = _cost(
+            game, AlphaZeroPlayer(evaluator, simulations=64, considered=7, c_scale=SEARCH_C_SCALE)
+        )
         print(f"{name}: {costs[name] * 1e6:.0f} us a simulation at 64 simulations.", flush=True)
     budgets = [int(s) for s in simulations or ("16", "64", "256")]
     for budget in budgets:
@@ -101,7 +104,9 @@ def _agent(
     evaluator: Evaluator[InARow, InARowPosition], simulations: int
 ) -> AlphaZeroPlayer[InARow, InARowPosition]:
     """Return a search player that draws noise, considering every column."""
-    return AlphaZeroPlayer(evaluator, simulations=simulations, considered=7, noise=True)
+    return AlphaZeroPlayer(
+        evaluator, simulations=simulations, considered=7, noise=True, c_scale=SEARCH_C_SCALE
+    )
 
 
 def _print_ladder(

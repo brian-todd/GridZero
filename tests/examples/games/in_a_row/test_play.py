@@ -14,6 +14,7 @@ from examples.games.in_a_row import (
     MOVE_FEATURES,
     PLACE,
     SEARCH_ALONE,
+    SEARCH_C_SCALE,
     VALUE_FEATURES,
     FittedEvaluator,
     InARow,
@@ -44,7 +45,7 @@ FIT = FittedEvaluator(
     -0.2,
     tuple(0.3 - 0.05 * j for j in range(len(MOVE_FEATURES))),
 )
-SEARCH = AlphaZeroPlayer(FIT, simulations=16, considered=7)
+SEARCH = AlphaZeroPlayer(FIT, simulations=16, considered=7, c_scale=SEARCH_C_SCALE)
 LADDER = (
     Rung("random", "Any column.", UniformPlayer()),
     Rung("fit", "A small search.", SEARCH),

@@ -190,8 +190,11 @@ class MuZeroPlayer[L]:
         Draw Gumbel noise at the root: on for self-play, off to play for strength.
     c_visit : float, default 50.0
         Visits added to the most visits in ``sigma``'s scale, at least 0.
-    c_scale : float, default 0.1
-        ``sigma``'s scale per visit, at least 0.
+    c_scale : float, default 0.03
+        ``sigma``'s scale per visit, at least 0. ``mctx`` uses 0.1, but the root's values are
+        rescaled to [0, 1] (`sigma`), so at 0.1 any gap between them outweighs the prior, and a
+        network's noisy values decide: on 15x15 Tactics (2026-11-09), a network taught by a code
+        player beat greedy 22-74 at 0.1 and 42-54 at 0.03.
     below : {"all", "root"}, default "all"
         The actions below the root: every action, or those legal at the root (see the module).
 
@@ -206,7 +209,7 @@ class MuZeroPlayer[L]:
     considered: int = 16
     noise: bool = False
     c_visit: float = 50.0
-    c_scale: float = 0.1
+    c_scale: float = 0.03
     below: Literal["all", "root"] = "all"
 
     def __post_init__(self) -> None:

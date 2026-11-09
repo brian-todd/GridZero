@@ -98,8 +98,12 @@ def test_the_search_plays_a_winning_action_for_either_team(make_battle):
 
 
 def test_with_noise_the_search_mostly_plays_winning_actions(make_battle):
+    # With a flat prior and the default value weight (0.03), noise outweighs the values more
+    # often: 5 of these 20 searches find the winning blow. At 0.1, 15 or more do.
     position, _ = finishing_blow(make_battle)
-    player = AlphaZeroPlayer(FakeEvaluator(), simulations=64, considered=64, noise=True)
+    player = AlphaZeroPlayer(
+        FakeEvaluator(), simulations=64, considered=64, noise=True, c_scale=0.1
+    )
     q = [search(player, SMALL, position, seed) for seed in range(20)]
     assert sum(found.q[found.action] > 0.9 for found in q) >= 15
 
@@ -181,7 +185,7 @@ def test_completed_values_mix_the_root_value_with_the_visited_means(make_battle)
     mixed = (0.9 + n.sum() * weighted) / (n.sum() + 1)
     completed = np.where(seen, np.nan_to_num(q), mixed)
     completed = (completed - completed.min()) / (completed.max() - completed.min())
-    sigma = (50 + n.max()) * 0.1 * completed
+    sigma = (50 + n.max()) * player.c_scale * completed
     expected = np.exp(np.log(prior) + sigma - sigma.max())
     np.testing.assert_allclose(found.policy[legal], expected / expected.sum(), rtol=1e-9)
     assert found.value == pytest.approx((0.9 + (n[seen] * q[seen]).sum()) / (1 + n.sum()))

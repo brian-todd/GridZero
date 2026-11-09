@@ -221,7 +221,8 @@ def test_a_single_legal_action_is_played_without_asking_the_model():
 )
 def test_the_search_refuses_bad_answers_from_its_model(answer, message):
     obs, legal = root()
-    search = LatentSearch(MuZeroPlayer(Oracle(target=0)), obs, legal, np.random.default_rng(0))
+    player = MuZeroPlayer(Oracle(target=0))
+    search = LatentSearch(player, obs, legal, np.random.default_rng(0))
     leaf = search.leaf()
     assert leaf is not None
     with pytest.raises(ValueError, match=message):
@@ -315,7 +316,7 @@ def test_the_improved_policy_moves_toward_the_actions_the_search_found_good():
     result = MuZeroPlayer(Oracle(target=7), simulations=48).search(
         obs, legal, np.random.default_rng(0)
     )
-    assert result.policy.flat[7] > 10 / legal.sum()  # the prior is uniform
+    assert result.policy.flat[7] > 4 / legal.sum()  # the prior is uniform
 
 
 def test_the_search_plays_only_among_the_actions_halving_kept():
@@ -331,7 +332,8 @@ def test_the_search_plays_only_among_the_actions_halving_kept():
 
 def test_below_the_root_the_search_visits_what_falls_furthest_short_of_its_policy():
     obs, legal = root()
-    search = LatentSearch(MuZeroPlayer(Oracle(target=0)), obs, legal, np.random.default_rng(0))
+    player = MuZeroPlayer(Oracle(target=0))
+    search = LatentSearch(player, obs, legal, np.random.default_rng(0))
     leaf = search.leaf()
     assert leaf is not None
     search.expand(leaf, (), np.zeros(legal.size), 0.0)
@@ -624,7 +626,8 @@ def test_self_play_and_reanalysis_run_on_a_stochastic_model(data):
 
 def test_only_the_root_stretches_a_vanishing_gap_between_tried_and_untried_actions():
     obs, legal = root()
-    search = LatentSearch(MuZeroPlayer(Oracle(target=0)), obs, legal, np.random.default_rng(0))
+    player = MuZeroPlayer(Oracle(target=0))
+    search = LatentSearch(player, obs, legal, np.random.default_rng(0))
     leaf = search.leaf()
     assert leaf is not None
     search.expand(leaf, (), np.zeros(legal.size), -0.2)  # 0.4 in the tree
@@ -633,5 +636,6 @@ def test_only_the_root_stretches_a_vanishing_gap_between_tried_and_untried_actio
     node.n[0] = 1000
     node.w[0] = 600.0
     below = dataclasses.replace(node)  # the same statistics at a node that isn't the root
-    assert search._sigma(node)[0] - search._sigma(node)[1] > 100.0
+    # the whole scale: (c_visit + most visits) * c_scale
+    assert search._sigma(node)[0] - search._sigma(node)[1] == pytest.approx(1050 * player.c_scale)
     assert search._sigma(below)[0] - search._sigma(below)[1] < 0.03

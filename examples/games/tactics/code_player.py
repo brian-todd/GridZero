@@ -553,6 +553,13 @@ def _by_name(names: tuple[str, ...], **weights: float) -> tuple[float, ...]:
     return tuple(weights.get(name, 0.0) for name in names)
 
 
+SEARCH_C_SCALE = 0.1
+"""The value weight (`agents.AlphaZeroPlayer`'s ``c_scale``) of code players' searches.
+
+They were fit and measured at 0.1, the default until 2026-11-09. At the default since, 0.03, the fit
+code player beat greedy 51-45 on 15x15 at 128 simulations, against 69-27 at 0.1."""
+
+
 HAND_PICKED = CodeEvaluator(
     value=_by_name(
         VALUE_FEATURES,

@@ -29,6 +29,7 @@ from gridzero.game import Player
 from .code_player import (
     MOVE_FEATURES,
     SEARCH_ALONE,
+    SEARCH_C_SCALE,
     VALUE_FEATURES,
     FittedEvaluator,
     LineEvaluator,
@@ -126,7 +127,9 @@ def rungs(
     def search(
         evaluator: Evaluator[InARow, InARowPosition], simulations: int
     ) -> Player[InARow, InARowPosition]:
-        return AlphaZeroPlayer(evaluator, simulations=simulations, considered=7)
+        return AlphaZeroPlayer(
+            evaluator, simulations=simulations, considered=7, c_scale=SEARCH_C_SCALE
+        )
 
     knows_fit = "Named features with constants fit to a trained agent's judgment"
     knows_teacher = "The trained network the code player was fit to"
