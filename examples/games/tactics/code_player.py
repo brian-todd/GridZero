@@ -279,13 +279,16 @@ def move_features(
 def _attack(
     game: Tactics, position: TacticsPosition, a: int, at: int, target: int
 ) -> tuple[float, float]:
-    """Return an attack's expected damage, and its chance of a kill times what the kill is worth."""
+    """Return an attack's expected damage, net of a bracing unit's strike, and what a kill is worth.
+
+    The second is its chance of a kill times what the kill is worth.
+    """
     u = position.state.units
     odds = game.odds(position, a, target, at=at)
     hp = int(u.hp[target])
     stats = game.units[u.kind[target]]
     kill = odds.chance * (stats.hp + stats.atk) if odds.atk >= hp else 0.0
-    return odds.chance * min(odds.atk, hp), kill
+    return odds.chance * min(odds.atk, hp) - odds.struck, kill
 
 
 def _place_columns(

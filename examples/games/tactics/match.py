@@ -8,7 +8,7 @@ experiment, so their scores compare.
 """
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 from numpy.typing import NDArray
@@ -17,6 +17,7 @@ from gridzero.game import Fairness, Record, Tally, fairness, tally
 
 from .events import Attacked, Broke, Built, Captured, Died, Ending, GameOver, Placed
 from .game import Tactics
+from .rules import ARCHER, CAPTAIN, ENGINEER, FOOTSOLDIER, KNIGHT
 from .state import TacticsPosition
 
 EVAL_SEED = 2_000_000
@@ -36,6 +37,28 @@ def small_rules() -> Tactics:
         The rules: 4 rounds to hold, a deadline at round 8 and a cap at round 16.
     """
     return Tactics(shape=(15, 15), home_depth=4, hold_rounds=4, capture_by=8, max_rounds=16)
+
+
+def earlier_rules() -> Tactics:
+    """Return the rules before knights charged and footsoldiers braced, to compare against.
+
+    A knight then had Atk 3, a double move, and a place each; footsoldiers didn't brace; holding the
+    point took 5 rounds; the order of turns was shuffled every round, and a unit stayed engaged
+    until the round ended.
+
+    Returns
+    -------
+    Tactics
+        The earlier rules: otherwise the default ones.
+    """
+    units = (
+        replace(FOOTSOLDIER, braces=False),
+        ARCHER,
+        replace(KNIGHT, atk=3, double_move=True, charge=0, extra_places=0),
+        CAPTAIN,
+        ENGINEER,
+    )
+    return Tactics(units=units, hold_rounds=5, shuffle_each_round=True, engaged_until_turn=False)
 
 
 @dataclass(frozen=True, eq=False)

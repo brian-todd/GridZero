@@ -22,13 +22,16 @@ FOOT, ARCHER, KNIGHT, CAPTAIN, ENGINEER = range(5)
 """The kinds of the default rules."""
 
 FIRST_UNITS = (
-    dataclasses.replace(DEFAULT_UNITS[FOOT], atk=2),
+    dataclasses.replace(DEFAULT_UNITS[FOOT], atk=2, braces=False),
     DEFAULT_UNITS[ARCHER],
-    dataclasses.replace(DEFAULT_UNITS[KNIGHT], move=4),
+    dataclasses.replace(
+        DEFAULT_UNITS[KNIGHT], atk=3, move=4, double_move=True, charge=0, extra_places=0
+    ),
     DEFAULT_UNITS[CAPTAIN],
 )
 """The units of the first rules (2026-10-24), which the tests' hand-worked numbers assume, with
-`SMALL` and `TINY` flanking x2 and with no bonus on overwatch as they had, so that tuning the
+`SMALL` and `TINY` flanking x2, with no bonus on overwatch, turns shuffled every round, units
+engaged until the round ends and the point held for 5 rounds, as they had, so that tuning the
 defaults leaves the tests of mechanics alone."""
 
 SMALL = Tactics(
@@ -37,6 +40,9 @@ SMALL = Tactics(
     team_size=12,
     flank_factor=2,
     overwatch_bonus=0,
+    shuffle_each_round=True,
+    engaged_until_turn=False,
+    hold_rounds=5,
     shape=(9, 9),
     home_depth=4,
 )
@@ -46,6 +52,9 @@ TINY = Tactics(
     units=FIRST_UNITS,
     flank_factor=2,
     overwatch_bonus=0,
+    shuffle_each_round=True,
+    engaged_until_turn=False,
+    hold_rounds=5,
     shape=(9, 9),
     caps=(2, 1, 1, 1),
     team_size=5,

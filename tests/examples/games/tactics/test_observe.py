@@ -15,7 +15,7 @@ def test_observations_have_one_float_plane_per_name_in_zero_to_one():
     position = TINY.start(1)
     obs = TINY.observe(position, 0)
     names = TINY.planes
-    assert len(names) == len(set(names)) == 4 + 3 * 4 + 1 + 6 + 5 + 3 + 2 + 1 + 4 + 1
+    assert len(names) == len(set(names)) == 4 + 3 * 4 + 1 + 6 + 5 + 3 + 2 + 2 + 1 + 4 + 1
     assert obs.shape == (len(names), 81)
     assert obs.dtype == np.float32
     assert obs.min() >= 0

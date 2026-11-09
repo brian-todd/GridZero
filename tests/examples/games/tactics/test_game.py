@@ -89,7 +89,7 @@ def test_rules_reject_inconsistent_parameters():
     with pytest.raises(TypeError, match="caps"):
         Tactics(caps=[6, 3, 2, 1, 1])  # ty: ignore[invalid-argument-type]
     with pytest.raises(ValueError, match="fill a team"):
-        Tactics(caps=(1, 1, 1, 1, 0), team_size=5)
+        Tactics(caps=(1, 1, 1, 1, 0), team_size=6)
     with pytest.raises(ValueError, match="hold"):
         Tactics(home_depth=2)  # 4 tiles for 8 units
     with pytest.raises(TypeError, match="free_facing"):
@@ -142,10 +142,14 @@ def test_deployment_alternates_and_each_side_fills_its_team():
         assert (position.state.home[listed.cell[listed.team == team]] == team).all()
 
 
-def rosters(caps, team_size):
-    """Every way to fill a team under the caps."""
+def rosters(caps, team_size, units):
+    """Every way to fill a team's places under the caps."""
     choices = itertools.product(*(range(cap + 1) for cap in caps))
-    return [roster for roster in choices if sum(roster) == team_size]
+    return [
+        roster
+        for roster in choices
+        if sum(s.places_for(n) for s, n in zip(units, roster, strict=True)) == team_size
+    ]
 
 
 def deploy(game, first, second):
@@ -161,13 +165,13 @@ def deploy(game, first, second):
 
 def test_every_roster_under_the_caps_fills_a_team_exactly():
     game = Tactics()
-    every = rosters(game.caps, game.team_size)
-    assert len(every) == {4: 20, 5: 43}[len(game.caps)]
+    every = rosters(game.caps, game.team_size, game.units)
+    assert len(every) == 43  # as many as when a second knight took one place, by chance
     for roster in every:
         position = deploy(game, roster, every[0])
         assert position.round == 1
         listed = units(position.state)
-        assert len(listed) == 2 * game.team_size
+        assert len(listed) == sum(roster) + sum(every[0])
         kinds = np.bincount(listed.kind[listed.team == 0], minlength=len(game.caps))
         assert tuple(kinds) == roster
 

@@ -160,7 +160,7 @@ class GreedyPlayer:
         """Place the roster's next kind in order, in the row its kind belongs to."""
         state = position.state
         space = state.space
-        roster = self.roster or default_roster(game.caps, game.team_size)
+        roster = self.roster or default_roster(game.caps, game.team_size, game.units)
         kinds = range(len(game.units))
         placed = [
             np.count_nonzero((state.units.kind == k) & (state.units.team == player)) for k in kinds
@@ -293,6 +293,7 @@ class GreedyPlayer:
             value = odds.chance * (
                 self.attack * min(odds.atk, hp) + self.kill * lethal * (stats.hp + stats.atk)
             )
+            value -= self.attack * odds.struck
             if value > best:
                 best, cell = value, int(t)
         return best, cell

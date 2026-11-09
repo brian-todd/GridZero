@@ -5,27 +5,36 @@ center: the first game, and the one the `game` and `agents` layers were first wr
 
 ## The rules
 
-**Squad and deployment.** Each side fields 8 units, at most 6 footsoldiers, 3 archers, 2 knights,
-a captain and an engineer. Sides alternate placing a unit in their home corner, team 0 first,
-choosing its kind and tile together. Nothing is hidden.
+**Squad and deployment.** Each side fills 8 places, with at most 6 footsoldiers, 3 archers, 2
+knights, a captain and an engineer. Every unit takes 1 place, but a second knight takes 2, so a
+side fields 7 or 8 units. Sides alternate placing a unit in their home corner, choosing its kind and tile
+together: the side with fewer units placed goes next, team 0 on a tie, and a side with no room
+left is passed over. Nothing is hidden.
 
-**Turns.** Every round each living unit gets one turn, in a shuffled order: it may move up to its
-allowance and attack once, in any order (move, attack, move), turn to face any direction, and
-end its turn.
+**Turns.** Every round each living unit gets one turn, in an order rolled once when the battle
+starts and seen by both sides: the teams alternate, a coin says which starts, each team's units
+come in a random order, the side with more units takes the last turns, and the dead drop out. On
+its turn a unit may move up to its allowance and attack once, in any order (move, attack, move),
+turn to face any direction, and end its turn.
 
 | Kind | HP | Atk | Def | Move | Reach | Passive |
 |---|---|---|---|---|---|---|
-| Footsoldier | 5 | 4 | 2 | 2 | 1 | Gains Def from adjacent footsoldiers (a formation) |
+| Footsoldier | 5 | 4 | 2 | 2 | 1 | Gains Def from adjacent footsoldiers (a formation), and braces against knights |
 | Archer | 3 | 2 | 1 | 2 | 3 | May defer its attack onto a tile, and fires when an enemy enters it, with +1 Atk |
-| Knight | 7 | 3 | 2 | 3 | 1 | Moves twice as far when it doesn't attack |
+| Knight | 7 | 2 | 2 | 3 | 1 | Charges: +2 Atk after moving its full 3 tiles. A second knight takes 2 places |
 | Captain | 9 | 4 | 3 | 2 | 1 | Lifts the Atk and Def of friends near it |
 | Engineer | 3 | 2 | 1 | 2 | 3 | Builds and breaks terrain |
 
 - **Attacks** hit on a d20 roll that gets easier as the attacker's Atk exceeds the target's Def,
   and a hit takes Atk from the target's hit points.
 - **Flanking** triples Atk: attacking from outside the three sides a target faces, or with two
-  enemies adjacent to it. A unit attacked this round is engaged, and later attackers get +1 Atk.
-  Overwatch's +1 comes after the multiplier, so a flanked arrow hits for 7.
+  enemies adjacent to it. A unit attacked since its last turn began is engaged, and later
+  attackers get +1 Atk. Overwatch's +1 comes after the multiplier, so a flanked arrow hits for 7.
+  A charge's +2 comes before it.
+- **The wall:** a footsoldier with a footsoldier beside it, and not engaged, can't be flanked by a
+  knight from any side, and a knight that charges it loses the +2 and is struck first, unflanked.
+  Other units flank it as usual, and once something has hit it, a knight may too: an archer's
+  arrow opens the wall for a knight's charge.
 - **Terrain:** a wall blocks movement and sight, and rubble blocks movement only. In place of its
   attack, an engineer may raise an adjacent tile a step (open, rubble, wall) or lower it a step.
   Not on a unit or the point, and a build may not cut any living unit or the point off from the
@@ -41,14 +50,17 @@ the owner's clock, the capture included, and a flip restarts it at 1.
 | When | Result |
 |---|---|
 | A side has no units left | The other side wins |
-| A side has owned the point for 5 rounds in a row | It wins |
+| A side has owned the point for 4 rounds in a row | It wins |
 | Nobody has captured the point by the end of round 10 | Team 1 loses: it places last, so it must take the first step |
 | The end of round 20 | The point's owner wins |
 
 The rules are data: `Tactics` and `UnitStats` (`rules.py`) hold every number, and every rule about
 the point is in `objective.py`, so that it can be reworked and measured with `tactics.rules`. The
 boards are symmetric under the half turn (`make_board`), and team 1 sees the board turned half a
-turn, so a network plays both sides the same way.
+turn, so a network plays both sides the same way. `earlier_rules()` gives the rules before
+2026-11-09 (knights with Atk 3, a double move and a place each, no wall, hold 5, turns shuffled
+every round, engaged until the round ends), which the findings below dated earlier were found
+under.
 
 ## Players
 
@@ -86,7 +98,39 @@ self-play on the GPU.
 
 ## What we found
 
-**Today's rules** (2026-11-06, 240 games a line unless it says otherwise, greedy players but for the
+**The default rules** (2026-11-09, 25x25, starts of their own: a round-robin of six rosters, 480 games a
+match for greedy and 96 for the code player at 128 simulations, and two matches for the search player at
+50). The rosters: default 3/2/1/1/1, two knights 1/2/2/1/1, no knight 4/2/0/1/1, wall 6/0/1/1/0, archers
+3/3/1/1/0, cavalry 3/0/2/1/1.
+
+| Reading | Greedy | Code player | Search player |
+|---|---|---|---|
+| Won by holding the point, of games | 32% | 41% | |
+| Team 0's share of games | 50% | 51% | |
+| Round-robin share: archers | 58% | 58% | |
+| Round-robin share: two knights | 55% | 56% | |
+| Round-robin share: no knight | 54% | 48% | |
+| Round-robin share: default | 53% | 53% | |
+| Round-robin share: wall | 42% | 46% | |
+| Round-robin share: cavalry | 38% | 40% | |
+| Two knights v default | 244-236 | 59-37 | 47-49 |
+| Wall v cavalry | 274-206 | 54-42 | 55-41 |
+| Archers v wall | 304-176 | 63-33 | |
+
+- **The second knight is priced about right:** two knights against the default won 49-62%, where a second
+  knight for a single place had won 61-69% for all three players. Over a footsoldier, greedy now values
+  a knight at about 3 points of 100, against -4 when every knight took two places.
+- **The wall works by being left alone:** of knights' attacks on footsoldiers, about one in ten is on one
+  with a footsoldier beside it, and knights are struck first only 1 to 9 times in 480 games. The wall
+  beats knights without archers, archers beat the wall, and mixed rosters (two knights, which keeps two
+  archers) beat it too: arrows break the wall and knights finish it. Knights without archers are the
+  weakest roster, so the triangle is not closed: archers beat cavalry as well.
+- **No roster wins everything:** greedy's archers win every match, but those against the default and two
+  knights by less than one sigma, and the code player's archers lose to two knights.
+- **Holding:** 32-41% of games end by holding for 4 rounds, against 46-53% for 5 under the earlier
+  rules. The better player holds more.
+
+**The rules before 2026-11-09** (`earlier_rules()`; 2026-11-06, 240 games a line unless it says otherwise, greedy players but for the
 search, rerun once greedy went back for an owned point an enemy stands on; the results dated
 2026-11-05 predate that). Greedy understates units whose worth is in how well they are used.
 

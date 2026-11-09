@@ -96,6 +96,8 @@ class Attacked(NamedTuple):
     """The hit points the target lost: at most what it had."""
     deferred: bool
     """Whether it was a deferred attack, fired by a unit entering a watched tile."""
+    braced: bool = False
+    """Whether it was the strike of a unit bracing against a charge (`rules.UnitStats.braces`)."""
 
 
 class Died(NamedTuple):
@@ -114,7 +116,7 @@ class Ended(NamedTuple):
 
 
 class RoundStarted(NamedTuple):
-    """A round began, with its order of turns shuffled."""
+    """A round began, the first with its order of turns rolled (`Tactics.shuffle_each_round`)."""
 
     round: int
 

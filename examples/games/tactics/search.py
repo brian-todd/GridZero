@@ -7,7 +7,7 @@ attacking. The greedy player's scores give the candidates and
 their priors, and its choices fill in the rest of a turn (which target, where to defer, which
 way to face). Both sides plan the same way inside the search.
 
-Chance (the d20 of each attack, and the shuffled order of turns each round) is sampled, not
+Chance (the d20 of each attack, and the order of turns when it is rolled) is sampled, not
 enumerated: every simulation plays from the root with a fresh seed drawn from the player's own
 generator, so the search never reads the game's seed, which fixes every future roll. Nodes are
 keyed by the plans chosen to reach them (open loop), so one node gathers many outcomes, and a

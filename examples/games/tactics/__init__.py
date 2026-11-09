@@ -1,10 +1,10 @@
 """Tactics: a two-player skirmish on a hex board, the first game.
 
-Each side picks a team of 8 under caps per kind as it deploys them in its corner of a 25x25 hex
-board with walls and rubble, then units take turns in a shuffled order, moving, attacking and
-turning, until one side has none left or has held the point at the center for 5 rounds in a row.
-Positioning is the heart of it: flanking triples
-Atk, captains lift those near them, and footsoldiers hold together.
+Each side fills a team of 8 places under caps per kind as it deploys them in its corner of a
+25x25 hex board with walls and rubble, then units take turns in an order rolled once, moving,
+attacking and turning, until one side has none left or has held the point at the center for 4
+rounds in a row. Positioning is the heart of it: flanking triples Atk, knights charge, captains
+lift those near them, and footsoldiers hold together against the charge.
 
 Game
 ----
@@ -46,7 +46,7 @@ Players and matches
 -------------------
 RandomPlayer, GreedyPlayer, Fielded, SitterPlayer
     Who picks an action from the legal ones.
-summarize, Summary, balance, Balance, EVAL_SEED, small_rules
+summarize, Summary, balance, Balance, EVAL_SEED, small_rules, earlier_rules
     What games show, how fair and lively they were, the boards players are scored on, and rules
     for quick games on a 15x15 board.
     `game.play` and `game.series` play them: `Tactics` is a `game.Game`.
@@ -96,7 +96,7 @@ from .events import (
 )
 from .game import Odds, Tactics
 from .lessons import Lessons, lessons_of, positions_of, teach
-from .match import EVAL_SEED, Balance, Summary, balance, small_rules, summarize
+from .match import EVAL_SEED, Balance, Summary, balance, earlier_rules, small_rules, summarize
 from .players import Fielded, GreedyPlayer, RandomPlayer, SitterPlayer
 from .rules import (
     DEFAULT_CAPS,
@@ -157,6 +157,7 @@ __all__ = [
     "balance",
     "board_space",
     "default_roster",
+    "earlier_rules",
     "event_text",
     "hit_chance",
     "hits",

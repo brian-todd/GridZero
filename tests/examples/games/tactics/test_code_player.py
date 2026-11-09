@@ -111,8 +111,8 @@ def test_walks_stay_between_minus_1_and_1_when_a_side_cannot_reach_the_point(mak
 
 
 def test_threat_sums_the_atk_that_can_reach_each_enemy(make_battle):
-    # A knight strikes from 3 x 2 + 1 = 7 tiles, a footsoldier from 2 + 1 = 3: 5 apart.
-    position = make_battle([piece(2, 2, KNIGHT, 0), piece(7, 2, FOOT, 1)], game=GAME)
+    # A knight strikes from 3 + 1 = 4 tiles, a footsoldier from 2 + 1 = 3: 4 apart.
+    position = make_battle([piece(2, 2, KNIGHT, 0), piece(6, 2, FOOT, 1)], game=GAME)
     assert value_of(position)["threat"] == GAME.units[KNIGHT].atk
 
 
@@ -243,11 +243,14 @@ def test_a_move_reads_the_best_attack_from_its_tile_and_only_if_it_can_still_att
     assert moves_of(make_battle(pieces, game=GAME))[Action(Verb.MOVE, tile)]["damage_after"] == 0
 
 
-def test_a_knight_moving_past_its_move_reads_no_attack_after(make_battle, at):
-    position = make_battle([piece(2, 5, KNIGHT, 0), piece(9, 5, FOOT, 1)], game=GAME)
-    moves = moves_of(position)
+def test_a_double_mover_moving_past_its_move_reads_no_attack_after(make_battle, at):
+    units = list(GAME.units)
+    units[KNIGHT] = dataclasses.replace(units[KNIGHT], double_move=True)
+    game = dataclasses.replace(GAME, units=tuple(units))
+    position = make_battle([piece(2, 5, KNIGHT, 0), piece(9, 5, FOOT, 1)], game=game)
+    moves = moves_of(position, game)
     # 6 tiles, past its move of 3: adjacent to the enemy but no attack.
-    assert moves[Action(Verb.MOVE, at(8, 5, GAME))]["damage_after"] == 0
+    assert moves[Action(Verb.MOVE, at(8, 5, game))]["damage_after"] == 0
 
 
 def test_moves_toward_the_point_count_only_if_the_unit_has_reason_to_go(make_battle, at):

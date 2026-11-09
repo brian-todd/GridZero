@@ -131,6 +131,7 @@ def event_text(game: Tactics, state: TacticsState, event: Event) -> str:
             return f"unit {uid} breaks {where(state, tile)} down to {terrain}"
         case Attacked():
             kind = "a deferred attack on" if event.deferred else "attacks"
+            kind = "braces against a charge by" if event.braced else kind
             outcome = f"hits for {event.damage}" if event.hit else "misses"
             flank = ", flanking" if event.flank else ""
             return (

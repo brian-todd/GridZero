@@ -333,7 +333,7 @@ def engineer_swap(
     defers = next((k for k, stats in enumerate(game.units) if stats.defers), None)
     if builds is None or defers is None:
         raise ValueError("the rules need a kind that builds and a kind that defers")
-    roster = default_roster(game.caps, game.team_size)
+    roster = default_roster(game.caps, game.team_size, game.units)
     if roster[builds] == 0 or roster[defers] >= game.caps[defers]:
         raise ValueError(f"roster {roster} has no engineer to swap for an archer")
     swapped = list(roster)
@@ -373,11 +373,12 @@ def rosters(
         100 a slot of each kind is worth over the first kind, by least squares, by kind's name.
         All 0 with no other roster to tell them from.
     """
-    opponent = base or default_roster(game.caps, game.team_size)
+    opponent = base or default_roster(game.caps, game.team_size, game.units)
     every = [
         roster
         for roster in itertools.product(*(range(cap + 1) for cap in game.caps))
-        if sum(roster) == game.team_size and roster != opponent
+        if sum(s.places_for(n) for s, n in zip(game.units, roster, strict=True)) == game.team_size
+        and roster != opponent
     ]
     scored = []
     for roster in every:

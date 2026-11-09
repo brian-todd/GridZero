@@ -111,10 +111,10 @@ def test_greedy_turns_to_the_nearest_enemy_then_ends(make_battle, at):
 
 def test_greedy_fields_its_roster_and_by_default_a_mix():
     game = Tactics()
-    picked = GreedyPlayer(roster=(2, 3, 2, 1, 0))
+    picked = GreedyPlayer(roster=(2, 2, 2, 1, 0))
     record = play(game, [picked, GREEDY], game.start(1))
     placed = [e for e in record.events if isinstance(e, Placed)]
-    for team, roster in ((0, (2, 3, 2, 1, 0)), (1, (3, 2, 1, 1, 1))):
+    for team, roster in ((0, (2, 2, 2, 1, 0)), (1, (3, 2, 1, 1, 1))):
         kinds = np.bincount([e.kind for e in placed if e.team == team], minlength=5)
         assert tuple(kinds) == roster
 

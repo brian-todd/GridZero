@@ -19,14 +19,18 @@ def test_default_units_follow_the_design_table():
     assert table == [
         ("footsoldier", 5, 4, 2, 2, 1),  # Atk 2 until T6 (2026-10-25), then 3, then 4
         ("archer", 3, 2, 1, 2, 3),
-        ("knight", 7, 3, 2, 3, 1),  # move 4 until T6 (2026-10-25)
+        ("knight", 7, 2, 2, 3, 1),  # move 4 until 2026-10-25, Atk 3 and a double move until 11-09
         ("captain", 9, 4, 3, 2, 1),
         ("engineer", 3, 2, 1, 2, 3),
     ]
     passives = np.array(
-        [(u.formation, u.defers, u.double_move, u.aura, u.builds) for u in DEFAULT_UNITS]
+        [(u.formation, u.defers, u.charge > 0, u.aura, u.builds) for u in DEFAULT_UNITS]
     )
     np.testing.assert_array_equal(passives, np.eye(5, dtype=bool))  # one passive each
+    assert [u.name for u in DEFAULT_UNITS if u.braces] == ["footsoldier"]
+    assert not any(u.double_move for u in DEFAULT_UNITS)
+    assert [u.places for u in DEFAULT_UNITS] == [1, 1, 1, 1, 1]
+    assert [u.extra_places for u in DEFAULT_UNITS] == [0, 0, 1, 0, 0]
     assert DEFAULT_CAPS == (6, 3, 2, 1, 1)
 
 
