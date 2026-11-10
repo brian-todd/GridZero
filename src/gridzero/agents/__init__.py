@@ -33,20 +33,12 @@ net, zero_train, imitate, ppo
 
 World models
 ------------
-muzero.MuZeroPlayer, muzero.WorldModel, muzero.StochasticModel, muzero.self_play
+muzero.MuZeroPlayer, muzero.WorldModel, muzero.self_play
     MuZero: the same Gumbel search over the latent states of a learned model of the game,
     which plays from what a player is shown, so games with hidden information too (NumPy
     only, not imported here).
 muzero_net, muzero_train
     The world model's network and its training (Torch, not imported here).
-
-Language models
----------------
-llm.LLMPlayer, llm.Menu, llm.Option
-    A player that asks a language model to pick from a numbered menu of the legal actions, which
-    each game writes (`Menu`).
-llm.Chat, llm.LlamaServer, llm.Message, llm.parse_choice
-    The model behind it: any chat that answers to a JSON schema, and llama.cpp's server.
 """
 
 from gridzero.agents.frame import Frame, Learnable, Observable, Revealable

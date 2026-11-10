@@ -30,7 +30,7 @@ People are one field with a component per player, up to `MAX_PLAYERS` = 4.
 |---|---|
 | `colonies.tournament [starts] [prefix] [players]` | The scripted players against uniform and each other, under fog and without, and the raider in every seat; a globe of a game's end |
 | `colonies.watch [start] [prefix] [players...]` | One game, round by round: the board or one player's view, each side's people below; a window or a GIF |
-| `colonies.muzero_scratch <minutes> [prefix] ...` | A MuZero player trained from scratch, in a time box, with its options as trailing arguments (belief, consistency, reanalyze, codes) |
+| `colonies.muzero_scratch <minutes> [prefix] [starts] [seed] [belief]` | A MuZero player trained from scratch, in a time box; the belief's weight is its one option |
 | `colonies.muzero_check <weights> [starts] [simulations]` | A saved network alone and searched, against the scripted players and each other |
 | `colonies.muzero_ladder [starts] [simulations] [weights...]` | Elo ratings of saved MuZero players and the scripted players, from every pair's results |
 
@@ -52,7 +52,9 @@ Run each as `uv run python run.py <command>`. `games.curves` draws any run's
   planning over every action below the root, more simulations (flat past 16), EfficientZero's
   consistency loss, Reanalyze, and Stochastic MuZero (worse, 546). The privileged belief does
   help as an auxiliary loss. An exploiter trained against the best player found no weakness.
-  The options stay in the code, off by default.
+  The consistency loss, Reanalyze, Stochastic MuZero and the exploiter's games were removed from
+  the code on 2026-11-09, and with them the search of networks trained before 2026-10-30, whose
+  policy only knew legal actions.
 
 The belief experiments (`colonies.belief`, `belief_check`) and the exploiter
 (`colonies.muzero_exploit`) were retired on 2026-11-01, their findings above; the belief lives
@@ -67,5 +69,5 @@ The weights, logs and figures are in `runs/muzero/` (not in git).
 | `game.py` | `Colonies`: the rules, the round's simulation, views, and the planes for world models |
 | `players.py` | `Settler`, `Raider` |
 | `match.py` | `EVAL_SEED` |
-| `learned.py` | `player(spec)`: a MuZero player from saved weights, `path@root` or `path@64` |
+| `learned.py` | `player(spec)`: a MuZero player from saved weights, `path` or `path@64` |
 | `picture.py` | `colors`, `view_colors`, `PLAYERS`, `FOG`, for globes and maps |

@@ -20,7 +20,7 @@ wheels/
 # Editor settings
 .zed/
 
-# Local settings, such as compose.yaml's LLM_* variables: may hold tokens
+# Local settings: may hold tokens
 .env
 .env.*
 

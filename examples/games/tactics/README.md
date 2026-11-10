@@ -288,9 +288,10 @@ history of the agents:
   verbs changed.
 
 The T6 tuning experiments, the T7 network stages and the LLM player (T4) were retired on
-2026-10-31, their work done. Their library pieces stay: `agents.imitate`, `agents.ppo` and
-`agents.llm`. The hill climb T6 ran on (`gridzero.tuning`) and the board and unit tables as
-text (`board_text`, `units_text`) were removed on 2026-11-01, unused, and so was
+2026-10-31, their work done. Their library pieces stay: `agents.imitate` and `agents.ppo`
+(`agents.llm`, the LLM player's, was removed on 2026-11-09, unused since). The hill climb T6
+ran on (`gridzero.tuning`) and the board and unit tables as text (`board_text`, `units_text`)
+were removed on 2026-11-01, unused, and so was
 `tactics.zero_train`, which trained from the PPO stage's weights (`runs/ppo100.pt`), which no
 experiment can make any more. `zero_check` still plays saved full-size weights.
 

@@ -17,7 +17,7 @@ comes second but is taken seriously.
 **Current focus:** the `core` package (`src/gridzero/core/`), which covers
 grids, neighborhoods, state, actions and the update loop. Beside it, `worlds` and `render`
 build planets, terrain and pictures from `core`. `game` holds the game layer beside `core`,
-`agents` what plays any game: the AlphaZero search, network and training, and LLM players,
+`agents` what plays any game: the AlphaZero search, network and training, and MuZero's,
 and `examples/games/` four games on them: `tactics`, a two-player skirmish on hexes,
 `in_a_row`, from tic-tac-toe to Connect Four, `voronoi`, stones placed on a planet by any
 number of players, and `colonies`, orders on a planet under fog of war, resolved by `core`'s
@@ -36,9 +36,9 @@ src/gridzero/game/    games beside simulations: the Game and Player protocols, P
 src/gridzero/agents/  players of any game: a uniform one, Observable, Revealable, Learnable and
                       Frame, the AlphaZero search (zero.py), its network (net.py) and training
                       (zero_train.py), MuZero's world model (muzero.py, muzero_net.py,
-                      muzero_train.py), imitation (imitate.py), PPO (ppo.py), LLM players
-                      (llm.py), exact values of small games (exact.py); Torch only in the
-                      networks and the training modules, which the package doesn't import
+                      muzero_train.py), imitation (imitate.py), PPO (ppo.py), exact values of
+                      small games (exact.py); Torch only in the networks and the training
+                      modules, which the package doesn't import
 src/gridzero/worlds/  Planet (planet.py), optional terrain (terrain.py), noise and relief
                       (noise.py)
 src/gridzero/         render.py (globes, maps, flat maps, cell polygons, text)
@@ -58,7 +58,6 @@ tests/                mirrors src/ and examples/. Shared fixtures and factories 
                       agents_demo.py, and helpers the Tactics tests import in tactics_demo.py
 benchmarks/           timing scripts, run as modules (python -m benchmarks.bench): bench.py times
                       both paths and the step target
-compose.yaml          the local LLM server for LLM players (llama.cpp, pinned image)
 ```
 
 ## Commands
@@ -72,7 +71,6 @@ uv run ruff format .             # format
 uv run ty check                  # type-check src/, examples/, tests/ and benchmarks/
 uv run python run.py                             # list the experiments; run.py <name> [args] runs one
 taskset -c 4 uv run python -m benchmarks.bench   # timings, pinned to one performance core
-docker compose up -d             # the local LLM server (llama.cpp) for LLM players; `down` stops it
 ```
 
 **Before calling work done:**
@@ -80,9 +78,6 @@ docker compose up -d             # the local LLM server (llama.cpp) for LLM play
 
 - Python 3.15. Run Python only through `uv run`, never `pip install`.
 - Add dependencies only with `uv add` or `uv add --dev`, and **ask before adding one**.
-- Language models are reached over HTTP with the standard library (`agents/llm.py`),
-  not a client package. The suite never needs the server: tests pass a fake `Chat`. No
-  example has an LLM player since Tactics' was retired on 2026-10-31.
 - We build on what is already locked: NumPy, SciPy, Numba, Matplotlib, pandas and
   scikit-learn. Torch and CUDA are available. GPU work in `core` is deferred; the networks of
   `agents` train on the GPU (RTX 3080, 10 GB: mind the memory) and play on the CPU.

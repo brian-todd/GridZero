@@ -1,8 +1,7 @@
 """Rate saved MuZero players of Colonies against each other and the scripted players.
 
 Every pair among the uniform player, the settler, the raider and a MuZero player per weights
-spec (`examples.games.colonies.learned`: ``path@root`` for a network trained before
-2026-10-30, ``path@64`` for 64 simulations; its search, no noise)
+spec (`examples.games.colonies.learned`: ``path@64`` for 64 simulations; its search, no noise)
 plays a series on the games players are scored on (`EVAL_SEED`), on every core. It prints the
 table of wins, and a rating per player on the Elo scale, the uniform player at 0, fitted to every
 pair's results (Bradley-Terry, with one drawn game added to each pair so that a perfect record
@@ -11,7 +10,7 @@ telling generations apart once all of them beat the scripted players.
 
 Run with ``uv run python run.py colonies.muzero_ladder [starts] [simulations] weights...``: by
 default 10 starts a pair and 32 simulations (unless a spec sets them), then any number of
-weights specs, named by their file names and tags.
+weights specs, named by their file names and simulations.
 """
 
 import itertools
@@ -42,7 +41,7 @@ def main(starts: str = "10", simulations: str = "32", *weights: str) -> None:
     Raises
     ------
     ValueError
-        If two players have one name: two specs of one file and tags, or of files named alike.
+        If two players have one name: two specs alike, or of files named alike.
     """
     game = Colonies()
     players: dict[str, Player[Colonies, ColoniesView]] = {

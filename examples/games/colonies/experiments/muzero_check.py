@@ -1,8 +1,7 @@
 """Measure a saved world model of Colonies: its network alone, and searched by a MuZero player.
 
-Loads the weights a spec names (`examples.games.colonies.learned`:
-``path@root`` for a network trained before 2026-10-30), then plays, on the games players are
-scored on (`EVAL_SEED`), on every core, under fog:
+Loads the weights a spec names (`examples.games.colonies.learned`), then plays, on the games
+players are scored on (`EVAL_SEED`), on every core, under fog:
 
 - the network alone (`MuZeroPlayer` with no simulations: the best legal order by its policy)
   against the uniform player, the settler and the raider;

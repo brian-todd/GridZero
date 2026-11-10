@@ -5,7 +5,10 @@ learned model", Nature 2020) never steps the game's rules: it learns a model of 
 own views, and plans with that. So it plays games whose positions it can't see, such as
 Colonies under fog, without peeking. From one seat, a decision is followed by whatever the
 world does until the player's next one (the other players' hidden orders and the dice), which
-the model learns as one step: the tree holds only the player's own decisions.
+the model learns as one step: the tree holds only the player's own decisions. The other
+players' replies are therefore part of what the model predicts, not choices the search weighs.
+For a game of two players that hides nothing, `agents.zero` searches the real positions, with
+both players' moves in its tree.
 
 `MuZeroPlayer` searches each decision with the Gumbel search of `agents.zero` (the same root
 and the same completed values, `zero.sigma` and `zero.finalists`), over latent states of a
@@ -13,31 +16,21 @@ and the same completed values, `zero.sigma` and `zero.finalists`), over latent s
 observation, and each action leads to the model's next latent state. It reads only its view,
 so it plays fairly whatever the game hides. Below the root, where the player can't know what
 will be legal, it considers every action, and the network's policy, trained over every action
-with nothing on the illegal ones, steers it toward those likely to be legal (``below="all"``,
-as MuZero does); ``below="root"`` keeps the actions legal at the root instead, the way of
-networks trained before 2026-10-30, whose scores of illegal actions mean nothing.
-
-With a `StochasticModel` (Stochastic MuZero; Antonoglou et al., "Planning in stochastic
-environments with a learned model", ICLR 2022), each action leads to a chance node, the model's
-afterstate, and each of its codes, what the world may do, to the next decision. The search then
-takes, at a chance node, the code whose visits fall furthest short of the model's probabilities,
-as `mctx` does, and each simulation expands one node of either kind.
+with nothing on the illegal ones, steers it toward those likely to be legal, as MuZero does.
 
 `Trajectories` are what it learns from: each player's decisions through a game, in order, with
 the whole position as that player would see it with nothing hidden (`agents.Revealable`), which
 the model's belief learns to guess. `trajectories` makes them from records of any players'
 games, and `self_play` from games of a MuZero player against itself, many at once, the model
-judging a leaf of each per call. `reanalyze` searches decisions already kept again, with the
-model as it is now, for fresher policy targets (MuZero Reanalyze). The network
-(`agents.muzero_net`, whose `NetModel` is a `WorldModel`) and its training
-(`agents.muzero_train`) import Torch; this module needs only NumPy.
+judging a leaf of each per call. The network (`agents.muzero_net`, whose `NetModel` is a
+`WorldModel`) and its training (`agents.muzero_train`) import Torch; this module needs only
+NumPy.
 """
 
-import dataclasses
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, NamedTuple, Protocol, runtime_checkable
+from typing import Any, NamedTuple, Protocol
 
 import numpy as np
 from numpy.typing import NDArray
@@ -53,7 +46,6 @@ from gridzero.agents.zero import (
     sigma,
 )
 from gridzero.core import State, check_int, check_real
-from gridzero.core._arrays import int_array
 from gridzero.game import Action, Position, Record, replay
 
 
@@ -105,68 +97,6 @@ class WorldModel[L](Protocol):
         ...
 
 
-@runtime_checkable
-class StochasticModel[L](Protocol):
-    """A learned model whose dynamics go through afterstates and chance codes.
-
-    As `WorldModel`, from one player's seat: values are the deciding player's, from -1 to 1,
-    and scores cover every action in the player's frame. A player's action leads to an
-    afterstate, before the world answers; one of ``codes`` outcomes then leads to the latent
-    state at the player's next decision.
-    """
-
-    def initial(
-        self, obs: Sequence[NDArray[np.float32]], /
-    ) -> tuple[list[L], NDArray[np.float64], NDArray[np.float64]]:
-        """Return the latent states of observations, with their scores and values.
-
-        As `WorldModel.initial`.
-        """
-        ...
-
-    def afterstates(
-        self, latents: Sequence[L], actions: NDArray[np.int64], /
-    ) -> tuple[list[L], NDArray[np.float64], NDArray[np.float64]]:
-        """Return the afterstates of the player's actions, what may follow them, and their values.
-
-        Parameters
-        ----------
-        latents : sequence of L
-            Latent states.
-        actions : ndarray of int64, shape (n,)
-            The action taken in each, in the player's frame.
-
-        Returns
-        -------
-        afterstates : list of L
-            One per action.
-        probs : ndarray of float64, shape (n, codes)
-            The probability of each code, each row summing to 1.
-        values : ndarray of float64, shape (n,)
-            Values in [-1, 1].
-        """
-        ...
-
-    def chance(
-        self, afterstates: Sequence[L], codes: NDArray[np.int64], /
-    ) -> tuple[list[L], NDArray[np.float64], NDArray[np.float64]]:
-        """Return the latent states at the player's next decisions, after the world's answers.
-
-        Parameters
-        ----------
-        afterstates : sequence of L
-            Afterstates.
-        codes : ndarray of int64, shape (n,)
-            What the world did after each, in ``[0, codes)``.
-
-        Returns
-        -------
-        latents, logits, values
-            As `WorldModel.initial` returns them, for the states after.
-        """
-        ...
-
-
 @dataclass(frozen=True)
 class MuZeroPlayer[L]:
     """Picks each decision by Gumbel search over a learned model's latent states.
@@ -179,9 +109,8 @@ class MuZeroPlayer[L]:
 
     Parameters
     ----------
-    model : WorldModel or StochasticModel
-        The learned model, such as `agents.muzero_net.NetModel` or
-        `agents.muzero_net.StochasticNetModel` (`agents.muzero_net.world_model` gives either).
+    model : WorldModel
+        The learned model, such as `agents.muzero_net.NetModel`.
     simulations : int, default 32
         Simulations per decision, at least 0.
     considered : int, default 16
@@ -195,8 +124,6 @@ class MuZeroPlayer[L]:
         rescaled to [0, 1] (`sigma`), so at 0.1 any gap between them outweighs the prior, and a
         network's noisy values decide: on 15x15 Tactics (2026-11-09), a network taught by a code
         player beat greedy 22-74 at 0.1 and 42-54 at 0.03.
-    below : {"all", "root"}, default "all"
-        The actions below the root: every action, or those legal at the root (see the module).
 
     Raises
     ------
@@ -204,13 +131,12 @@ class MuZeroPlayer[L]:
         If a parameter has the wrong type or is out of range.
     """
 
-    model: WorldModel[L] | StochasticModel[L]
+    model: WorldModel[L]
     simulations: int = 32
     considered: int = 16
     noise: bool = False
     c_visit: float = 50.0
     c_scale: float = 0.03
-    below: Literal["all", "root"] = "all"
 
     def __post_init__(self) -> None:
         check_int(self.simulations, "simulations", minimum=0)
@@ -219,8 +145,6 @@ class MuZeroPlayer[L]:
             raise TypeError(f"noise must be a bool, got {type(self.noise).__name__}")
         check_real(self.c_visit, "c_visit", 0.0)
         check_real(self.c_scale, "c_scale", 0.0)
-        if self.below not in ("all", "root"):
-            raise ValueError(f'below must be "all" or "root", got {self.below!r}')
 
     def __call__(
         self,
@@ -275,7 +199,7 @@ class MuZeroPlayer[L]:
 class _LatentNode[L]:
     """A latent state of the search, its actions and their statistics.
 
-    ``actions`` are those legal at the root, or every action below it (``below="all"``).
+    ``actions`` are those legal at the root, and every action below it.
     ``logits`` holds the prior's log-probabilities over ``actions``, ``value`` the model's value
     in [0, 1] for the deciding player, ``n`` and ``w`` the visits of each action and the sum of
     values over them.
@@ -287,39 +211,18 @@ class _LatentNode[L]:
     value: float
     n: NDArray[np.int64]
     w: NDArray[np.float64]
-    children: list[_LatentNode[L] | _ChanceNode[L] | None] = field(default_factory=list)
-
-
-@dataclass(eq=False)
-class _ChanceNode[L]:
-    """An afterstate of the search, what may follow it, and their statistics.
-
-    ``probs`` holds the model's probability of each code, ``value`` its value in [0, 1] for the
-    deciding player, ``n`` and ``w`` the visits of each code and the sum of values over them.
-    """
-
-    latent: L
-    probs: NDArray[np.float64]
-    value: float
-    n: NDArray[np.int64]
-    w: NDArray[np.float64]
     children: list[_LatentNode[L] | None] = field(default_factory=list)
-
-
-type _Node[L] = _LatentNode[L] | _ChanceNode[L]
 
 
 class LatentLeaf[L](NamedTuple):
     """What a search needs the model for: the root's observation, or a step from a node."""
 
-    path: list[tuple[_Node[L], int]]
-    """The nodes and steps taken from the root, the last one to the state wanted."""
-    parent: _Node[L] | None
-    """The node the step leaves, or None for the root: from a decision an action, to a state
-    (`WorldModel.recurrent`) or an afterstate (`StochasticModel.afterstates`); from a chance
-    node a code, to a state (`StochasticModel.chance`)."""
+    path: list[tuple[_LatentNode[L], int]]
+    """The nodes and actions taken from the root, the last one to the state wanted."""
+    parent: _LatentNode[L] | None
+    """The node the action leaves (`WorldModel.recurrent`), or None for the root."""
     index: int
-    """The step's place among the parent's actions or codes (0 for the root)."""
+    """The action's place among the parent's actions (0 for the root)."""
     obs: NDArray[np.float32]
     """The root's observation, quantized as stored for training."""
 
@@ -352,7 +255,7 @@ class LatentSearch[L]:
         self.actions = np.flatnonzero(legal)
         """The root's actions: those legal."""
         self.every = np.arange(legal.size)
-        """Every action, for nodes below the root with ``below="all"``."""
+        """Every action, for nodes below the root."""
         if self.actions.size == 0:
             raise ValueError("search needs at least one legal action")
         self.player = player
@@ -360,8 +263,6 @@ class LatentSearch[L]:
         self.obs = (np.rint(obs * 255) / 255).astype(np.float32)
         self.rng = rng
         self.root: _LatentNode[L] | None = None
-        self.stochastic = isinstance(player.model, StochasticModel)
-        """Whether actions lead to chance nodes."""
         self.left = player.simulations
         self.gumbel = np.zeros(0)
 
@@ -372,13 +273,10 @@ class LatentSearch[L]:
         if self.left == 0:
             return None
         self.left -= 1
-        path: list[tuple[_Node[L], int]] = []
-        node: _Node[L] = self.root
+        path: list[tuple[_LatentNode[L], int]] = []
+        node = self.root
         while True:
-            if isinstance(node, _ChanceNode):
-                i = _argmax(node.probs - node.n / (1 + node.n.sum()), self.rng)
-            else:
-                i = self._at_root() if node is self.root else self._below(node)
+            i = self._at_root() if node is self.root else self._below(node)
             path.append((node, i))
             child = node.children[i]
             if child is None:
@@ -396,8 +294,7 @@ class LatentSearch[L]:
             raise ValueError("the model gave scores that are not finite")
         if not -1.0 <= value <= 1.0:
             raise ValueError(f"the model gave a value outside [-1, 1]: {value}")
-        root = leaf.parent is None
-        actions = self.actions if root or self.player.below == "root" else self.every
+        actions = self.actions if leaf.parent is None else self.every
         own = logits[actions]
         top = own.max()
         size = actions.size
@@ -410,59 +307,11 @@ class LatentSearch[L]:
             np.zeros(size),
             [None] * size,
         )
-        if root:
+        if leaf.parent is None:
             self.root = node
             self.gumbel = self.rng.gumbel(size=size) if self.player.noise else np.zeros(size)
             return
-        if isinstance(leaf.parent, _ChanceNode) != self.stochastic:
-            raise ValueError("a state follows an afterstate's code, or an action without codes")
         leaf.parent.children[leaf.index] = node
-        _backed_up(leaf.path, node.value)
-
-    def expand_chance(
-        self, leaf: LatentLeaf[L], afterstate: L, probs: NDArray[np.float64], value: float
-    ) -> None:
-        """Give the afterstate the leaf asked for its model's answer, and back its value up.
-
-        Parameters
-        ----------
-        leaf : LatentLeaf
-            A leaf of this search that steps from a decision, with a stochastic model.
-        afterstate : L
-            The model's afterstate.
-        probs : ndarray of float64, shape (codes,)
-            The probability of each code: finite, at least 0, summing to 1.
-        value : float
-            Its value for the deciding player, in [-1, 1].
-
-        Raises
-        ------
-        ValueError
-            If the leaf doesn't step from a decision with a stochastic model, or the model's
-            answer is out of range.
-        """
-        probs = np.asarray(probs, dtype=np.float64)
-        if probs.ndim != 1 or probs.size == 0:
-            raise ValueError(f"the model gave probabilities of shape {probs.shape}")
-        if not (np.isfinite(probs).all() and (probs >= 0).all()):
-            raise ValueError("the model gave probabilities that are not finite and at least 0")
-        if not math.isclose(probs.sum(), 1.0, abs_tol=1e-6):
-            raise ValueError(f"the model gave probabilities summing to {probs.sum()}")
-        if not -1.0 <= value <= 1.0:
-            raise ValueError(f"the model gave a value outside [-1, 1]: {value}")
-        parent = leaf.parent
-        if not self.stochastic or not isinstance(parent, _LatentNode):
-            raise ValueError("an afterstate follows an action, with a stochastic model")
-        size = probs.size
-        node = _ChanceNode(
-            afterstate,
-            probs,
-            (value + 1) / 2,
-            np.zeros(size, dtype=np.int64),
-            np.zeros(size),
-            [None] * size,
-        )
-        parent.children[leaf.index] = node
         _backed_up(leaf.path, node.value)
 
     def result(self) -> SearchResult:
@@ -690,14 +539,8 @@ def self_play[P: Position[State, object], L](
     game: Revealable[P, Any],
     player: MuZeroPlayer[L],
     seeds: Sequence[int],
-    *,
-    rival: MuZeroPlayer[Any] | None = None,
 ) -> tuple[Trajectories, list[Played[P]]]:
     """Play games of a MuZero player in every seat, all at once, and keep every decision.
-
-    With a ``rival``, the player takes one seat of each game, seat ``i % n_players`` in the
-    ``i``-th, and the rival every other, and only the player's decisions are kept: the games
-    an exploiter learns from against a fixed player.
 
     Each game searches its decisions in turn, as ``player.search`` does; the games' searches
     take a leaf each, and the model judges them in two calls (`WorldModel.initial` for new
@@ -720,14 +563,11 @@ def self_play[P: Position[State, object], L](
         The player in every seat, with its model; set ``noise`` for exploration.
     seeds : sequence of int
         One game per seed, each at least 0, at least one.
-    rival : MuZeroPlayer, optional
-        The player in the other seats, with a model of its own; its leaves are judged in
-        batches of their own.
 
     Returns
     -------
     trajectories : Trajectories
-        Every decision of the player, by game in the order of the seeds, then by seat.
+        Every decision, by game in the order of the seeds, then by seat.
     played : list of Played
         How each game went, in the order of the seeds (``searched`` and ``kept`` count the
         decisions searched and kept).
@@ -739,133 +579,33 @@ def self_play[P: Position[State, object], L](
     """
     if not seeds:
         raise ValueError("self-play needs at least one seed")
-    games = [
+    games: list[_SelfPlay[P, L]] = [
         _SelfPlay(
-            s,
-            game.start(s),
-            np.random.default_rng(np.random.SeedSequence(s, spawn_key=(4,))),
-            None if rival is None else i % game.n_players,
+            s, game.start(s), np.random.default_rng(np.random.SeedSequence(s, spawn_key=(4,)))
         )
-        for i, s in enumerate(check_int(seed, "seed", minimum=0) for seed in seeds)
+        for s in (check_int(seed, "seed", minimum=0) for seed in seeds)
     ]
     running = list(games)
     while running:
-        waiting = [
-            (g, leaf) for g in running if (leaf := g.advance(game, player, rival)) is not None
-        ]
+        waiting = [(g, leaf) for g in running if (leaf := g.advance(game, player)) is not None]
         running = [g for g, _ in waiting]
-        for searcher in (player, rival):
-            if searcher is not None:
-                mine = [(g.search, leaf) for g, leaf in waiting if g.searcher is searcher]
-                _judge(searcher.model, [(s, leaf) for s, leaf in mine if s is not None])
+        _judge(player.model, [(g.search, leaf) for g, leaf in waiting if g.search is not None])
     data = _assembled([(g.decisions, g.position.winner) for g in games])
     return data, [g.played() for g in games]
 
 
-def reanalyze[L](
-    game: Observable[Any, Any],
-    player: MuZeroPlayer[L],
-    data: Trajectories,
-    rows: Sequence[int] | NDArray[np.integer],
-    *,
-    seed: int = 0,
-    batch: int = 512,
-) -> Trajectories:
-    """Return trajectories whose policy targets at some decisions are searched again.
-
-    MuZero Reanalyze: a target kept from an earlier search is as good as the model was then.
-    Each decision in ``rows`` is searched again from its stored observation and legal actions,
-    as ``player.search`` does, and its policy target becomes the new improved policy. What
-    happened stays: the observations, the actions taken and the outcomes. A decision with one
-    legal action keeps its target, all on that action. No game is stepped, so it works for any
-    game, hidden or not: the search reads only what the player saw.
-
-    The searches run ``batch`` at a time in lockstep, the model judging a leaf of each per call,
-    as in `self_play`; a model holds every latent state of a batch's trees until it is done, so
-    ``batch`` bounds the memory. All draw from one generator seeded by ``seed``.
-
-    Parameters
-    ----------
-    game : Observable
-        The rules the decisions were taken under: they fix the number of verbs and cells.
-    player : MuZeroPlayer
-        The searcher, with its model, at least one simulation.
-    data : Trajectories
-        Decisions of the game.
-    rows : sequence of int or ndarray of int, shape (k,)
-        The decisions searched again, each in ``[0, len(data))``.
-    seed : int, default 0
-        The seed of the noise and of every tie, non-negative.
-    batch : int, default 512
-        Searches at once, at least 1.
-
-    Returns
-    -------
-    Trajectories
-        ``data`` with a new policy array; every other array shared.
-
-    Raises
-    ------
-    TypeError, ValueError
-        If an argument has the wrong type or is out of range, or the model answers badly.
-    IndexError
-        If a row is outside the trajectories.
-    """
-    rows = int_array(rows, "rows").ravel()
-    if np.any((rows < 0) | (rows >= len(data))):
-        raise IndexError(f"rows must be in [0, {len(data)})")
-    if player.simulations == 0:
-        raise ValueError("reanalyzing needs a player that searches, with simulations")
-    batch = check_int(batch, "batch", minimum=1)
-    rng = np.random.default_rng(check_int(seed, "seed", minimum=0))
-    shape = (game.n_verbs, game.space.n_cells)
-    rows = rows[data.start[rows + 1] - data.start[rows] > 1]  # more than one legal action
-    policy = data.policy.copy()
-    for chunk in (rows[i : i + batch] for i in range(0, rows.size, batch)):
-        legal = np.unpackbits(data.legal[chunk], axis=1)[:, : shape[0] * shape[1]].astype(bool)
-        searches = [
-            LatentSearch(player, (data.obs[r] / 255).astype(np.float32), m.reshape(shape), rng)
-            for r, m in zip(chunk, legal, strict=True)
-        ]
-        while waiting := [(s, leaf) for s in searches if (leaf := s.leaf()) is not None]:
-            _judge(player.model, waiting)
-        for r, m, search in zip(chunk, legal, searches, strict=True):
-            policy[data.start[r] : data.start[r + 1]] = search.result().policy.ravel()[m]
-    return dataclasses.replace(data, policy=policy)
-
-
 def _judge[L](
-    model: WorldModel[L] | StochasticModel[L],
-    waiting: Sequence[tuple[LatentSearch[L], LatentLeaf[L]]],
+    model: WorldModel[L], waiting: Sequence[tuple[LatentSearch[L], LatentLeaf[L]]]
 ) -> None:
-    """Give each search's leaf the model's answer, a call per kind of leaf.
-
-    New roots go to ``initial``; steps from decisions to ``recurrent``, or with a
-    `StochasticModel` to ``afterstates``; steps from chance nodes to ``chance``.
-    """
+    """Give each search's leaf the model's answer: new roots in one call, steps in another."""
     new = [(s, leaf) for s, leaf in waiting if leaf.parent is None]
-    acted = [(s, leaf) for s, leaf in waiting if isinstance(leaf.parent, _LatentNode)]
-    coded = [(s, leaf) for s, leaf in waiting if isinstance(leaf.parent, _ChanceNode)]
+    acted = [(s, leaf, leaf.parent) for s, leaf in waiting if leaf.parent is not None]
     if new:
         _expand(new, *model.initial([leaf.obs for _, leaf in new]))
     if acted:
-        nodes = [leaf.parent for _, leaf in acted if isinstance(leaf.parent, _LatentNode)]
-        latents = [p.latent for p in nodes]
-        actions = np.array(
-            [p.actions[leaf.index] for p, (_, leaf) in zip(nodes, acted, strict=True)]
-        )
-        if isinstance(model, StochasticModel):
-            afterstates, probs, values = model.afterstates(latents, actions)
-            for i, ((search, leaf), after) in enumerate(zip(acted, afterstates, strict=True)):
-                search.expand_chance(leaf, after, probs[i], float(values[i]))
-        else:
-            _expand(acted, *model.recurrent(latents, actions))
-    if coded:
-        if not isinstance(model, StochasticModel):
-            raise ValueError("only a stochastic model has chance nodes")
-        chances = [leaf.parent for _, leaf in coded if isinstance(leaf.parent, _ChanceNode)]
-        codes = np.array([leaf.index for _, leaf in coded], dtype=np.int64)
-        _expand(coded, *model.chance([c.latent for c in chances], codes))
+        latents = [parent.latent for _, _, parent in acted]
+        actions = np.array([parent.actions[leaf.index] for _, leaf, parent in acted])
+        _expand([(s, leaf) for s, leaf, _ in acted], *model.recurrent(latents, actions))
 
 
 def _expand[L](
@@ -879,8 +619,8 @@ def _expand[L](
         search.expand(leaf, latent, logits[i], float(values[i]))
 
 
-def _backed_up[L](path: Sequence[tuple[_Node[L], int]], value: float) -> None:
-    """Count a visit of each step along a path, with the value found at its end."""
+def _backed_up[L](path: Sequence[tuple[_LatentNode[L], int]], value: float) -> None:
+    """Count a visit of each action along a path, with the value found at its end."""
     for node, i in path:
         node.n[i] += 1
         node.w[i] += value
@@ -889,25 +629,16 @@ def _backed_up[L](path: Sequence[tuple[_Node[L], int]], value: float) -> None:
 class _SelfPlay[P: Position[State, object], L]:
     """A self-play game under way: its position, its search, and its decisions."""
 
-    def __init__(self, seed: int, position: P, rng: np.random.Generator, seat: int | None) -> None:
+    def __init__(self, seed: int, position: P, rng: np.random.Generator) -> None:
         self.seed = seed
         self.position = position
         self.rng = rng
-        self.seat = seat
-        """The learner's seat, or None if it sits in every seat."""
         self.search: LatentSearch[L] | None = None
-        self.searcher: MuZeroPlayer[Any] | None = None
-        """Whose search is under way."""
         self.decisions = _Decisions()
         self.searched = 0
         self.kept = 0
 
-    def advance(
-        self,
-        game: Revealable[P, Any],
-        player: MuZeroPlayer[L],
-        rival: MuZeroPlayer[Any] | None,
-    ) -> LatentLeaf[L] | None:
+    def advance(self, game: Revealable[P, Any], player: MuZeroPlayer[L]) -> LatentLeaf[L] | None:
         """Play on until a search needs its model; return its leaf, or None once over."""
         while True:
             if self.search is not None:
@@ -930,10 +661,8 @@ class _SelfPlay[P: Position[State, object], L]:
                 else:
                     mover = game.player(self.position)
                     obs = game.observe(game.view(self.position, mover), mover)
-                    learns = self.seat is None or mover == self.seat
-                    self.searcher = player if learns or rival is None else rival
-                    self.search = LatentSearch(self.searcher, obs, legal, self.rng)
-                    self.searched += learns
+                    self.search = LatentSearch(player, obs, legal, self.rng)
+                    self.searched += 1
 
     def _mask(self, game: Revealable[P, Any]) -> NDArray[np.bool_]:
         """Return the mover's legal actions in its frame, shape (n_verbs, n_cells)."""
@@ -946,13 +675,12 @@ class _SelfPlay[P: Position[State, object], L]:
         flat: int,
         policy: NDArray[np.float32],
     ) -> None:
-        """Keep the mover's decision if it is the learner's, then play its action."""
+        """Keep the mover's decision, then play its action."""
         mover = game.player(self.position)
-        frame = game.frame(mover)
-        if self.seat is None or mover == self.seat:
-            self.decisions.add(game, self.position, mover, legal, flat, policy)
-            self.kept += 1
+        self.decisions.add(game, self.position, mover, legal, flat, policy)
+        self.kept += 1
         n_cells = legal.size // game.n_verbs
+        frame = game.frame(mover)
         self.position = game.step(self.position, frame.action_back(divmod(flat, n_cells)))
 
     def played(self) -> Played[P]:

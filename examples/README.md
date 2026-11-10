@@ -103,10 +103,3 @@ series(game, [a, b], starts, EVAL_SEED, workers=CORES)   # or ladder for one aga
 Watching a game is one experiment per game, `<game>.watch [start] [prefix] [players...]`,
 which steps through a game in a window or saves a GIF. The full conventions are in
 [`AGENTS.md`](../AGENTS.md), under "Design decisions".
-
-## Language models
-
-An LLM player (`gridzero.agents.llm.LLMPlayer`) asks a model served on this machine by
-llama.cpp, which `compose.yaml` at the root starts (it needs a GPU with the NVIDIA container
-toolkit, and downloads a 4.6 GB model the first time): `docker compose up -d`, then `down`. No
-example uses one since Tactics' was retired on 2026-10-31.
