@@ -32,6 +32,7 @@ EXPERIMENTS = {
     "tactics.code_fit": "examples.games.tactics.experiments.code_fit",
     "tactics.code_ladder": "examples.games.tactics.experiments.code_ladder",
     "tactics.rules": "examples.games.tactics.experiments.rules",
+    "tactics.fog": "examples.games.tactics.experiments.fog",
     "tactics.zero_check": "examples.games.tactics.experiments.zero_check",
     "tactics.zero_scratch": "examples.games.tactics.experiments.zero_scratch",
     "tactics.watch": "examples.games.tactics.experiments.watch",

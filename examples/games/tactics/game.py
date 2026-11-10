@@ -6,6 +6,12 @@ and ``step`` makes the next position from any position and one action. Each step
 decision: placing a unit, or one action of the acting unit's turn. It is a `game.Game`, so
 `game.play` and `game.series` play it.
 
+Under fog (``fog``, the default) a side is shown only what its units see (`Tactics.view`): a
+**belief**, a position of
+its own units and of the other side's where it sees them or last did. What it may do is decided
+on that belief, and a belief is itself played on as a game that hides nothing, so a search plans
+on what its player knows and never on what it doesn't.
+
 Every search spends most of its time here and in the players, so these modules write NumPy for
 speed: ``mask.nonzero()[0]`` for ``np.flatnonzero(mask)`` on a 1-D mask, and methods such as
 ``x.any()`` for ``np.any(x)``, which goes through a Python wrapper. What depends only on the space
@@ -86,7 +92,7 @@ class Tactics:
     Each side picks and deploys its units in its home, alternately, then every living unit takes
     one turn per round, in an order rolled once when the battle starts. On its turn a unit may
     move, attack (or defer its attack, or work on a tile) and turn, in any order, splitting its
-    movement around the attack.
+    movement around the attack. In battle a side sees the other's units only near its own (``fog``).
     A side wins when the other has no units left, or by holding the point at the center
     (`objective`). The example's README gives the rules in full.
 
@@ -149,14 +155,22 @@ class Tactics:
     capture_by : int, default 10
         If nobody has captured the point by the end of this round, team 1 loses. At most
         ``max_rounds``, so that the point has an owner at the end of the last round.
+    fog : bool, default True
+        Whether, once the battle starts, a side sees the other's units only on tiles within the
+        sight of one of its own (`UnitStats.sight`, around walls), and is shown the rest where
+        it last saw them (`view`). Deployment, the terrain, the order of turns, who holds the
+        point and every death stay in the open. Every kind must see at least as far as the
+        furthest reach, so that a unit always sees what attacks it. Without it nothing is
+        hidden, as before 2026-11-10.
 
     Raises
     ------
     TypeError
         If a parameter has the wrong type.
     ValueError
-        If a parameter is out of range, ``caps`` doesn't match ``units`` or can't fill a team, or
-        a home is too small for a side's units.
+        If a parameter is out of range, ``caps`` doesn't match ``units`` or can't fill a team, a
+        home is too small for a side's units, or under fog a kind sees less far than another
+        strikes.
     """
 
     units: tuple[UnitStats, ...] = DEFAULT_UNITS
@@ -183,10 +197,23 @@ class Tactics:
     max_rounds: int = 20
     hold_rounds: int = 4
     capture_by: int = 10
+    fog: bool = True
     _last: list[tuple[TacticsPosition, _Turn]] = field(
         default_factory=list, init=False, repr=False, compare=False
     )
     """The last position asked about and its decision: callers ask one position several things."""
+    _views: list[tuple[TacticsPosition, int, TacticsPosition]] = field(
+        default_factory=list, init=False, repr=False, compare=False
+    )
+    """The last belief made: of which position, for which team."""
+    _sights: dict[tuple[int, float], NDArray[np.bool_]] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
+    """What a unit sees from a tile at a radius, for the walls of `_walls`."""
+    _walls: list[NDArray[np.bool_]] = field(
+        default_factory=list, init=False, repr=False, compare=False
+    )
+    """The walls `_sights` was worked out for: a board's own array, until an engineer changes it."""
 
     def __post_init__(self) -> None:
         if not isinstance(self.units, tuple) or not self.units:
@@ -244,9 +271,15 @@ class Tactics:
             "face_center",
             "shuffle_each_round",
             "engaged_until_turn",
+            "fog",
         ):
             if not isinstance(getattr(self, flag), bool):
                 raise TypeError(f"{flag} must be a bool, got {getattr(self, flag)!r}")
+        if self.fog and min(s.sight for s in self.units) < max(s.reach for s in self.units):
+            raise ValueError(
+                "under fog every kind must see at least as far as the furthest reach, so that "
+                "a unit sees what attacks it"
+            )
         home = homes(board_space(self.shape), self.home_depth)
         if min(np.count_nonzero(home == 0), np.count_nonzero(home == 1)) < self.team_size:
             raise ValueError(
@@ -273,7 +306,8 @@ class Tactics:
         """The names of the planes of `observe`, in order (`agents.frame.Learnable`).
 
         One name per plane. Planes of units are 1 on the unit's cell; planes of scalars, such
-        as ``"round"``, hold the same value on every cell. There are planes per kind of unit.
+        as ``"round"``, hold the same value on every cell. There are planes per kind of unit, and
+        two more under ``fog``.
         """
         kinds = [stats.name for stats in self.units]
         return (
@@ -304,6 +338,7 @@ class Tactics:
             "enemy point",
             "clock",
             "loses the deadline",
+            *(("seen", "ghost age") if self.fog else ()),
         )
 
     @functools.cached_property
@@ -401,7 +436,7 @@ class Tactics:
         return turn.team
 
     def view(self, position: TacticsPosition, player: int) -> TacticsPosition:
-        """Return what a player is shown of a position: all of it, since nothing is hidden.
+        """Return what a player is shown of a position: all of it, or under fog what it believes.
 
         Parameters
         ----------
@@ -413,19 +448,28 @@ class Tactics:
         Returns
         -------
         TacticsPosition
-            ``position`` itself.
+            ``position`` itself without ``fog``, once the game is over, and when it is a belief
+            already. Otherwise the team's belief (``belief == player``): its own units as they
+            are; the other side's units it sees, as they are; and the rest as ghosts, each on the
+            tile `Unit.spotted` with the hit points and facing it last showed, as a unit that has
+            done nothing this round and watches no tile. During deployment that is every unit
+            where it is. Nothing in it depends on where the units it doesn't see are, or on what
+            they have done. Its seed is not the game's, which fixes every roll to come, and it
+            carries no events.
         """
-        return position
+        if not self.fog or position.belief >= 0 or position.over:
+            return position
+        return self._believed(position, _check_team(player))
 
     def observe(self, position: TacticsPosition, team: SupportsIndex, /) -> NDArray[np.float32]:
         """Return what a team sees of a position: planes per cell, in its own frame.
 
-        The game has full information, so an observation holds the whole position, laid out for
-        networks (`agents.frame.Learnable`): one plane of floats per feature, each a value per
-        cell, in the player's frame. Units are "own" and "enemy" rather than team 0 and 1, and
-        for team 1 the board is turned half a turn (`LatticeSpace.opposite`, directions turned
-        by 3), so the player's home is always team 0's corner. One policy then plays both
-        sides.
+        An observation holds the whole of the position it is given (under ``fog``, give it the
+        team's `view`), laid out for networks (`agents.frame.Learnable`): one plane of floats per
+        feature, each a value per cell, in the player's frame. Units are "own" and "enemy" rather
+        than team 0 and 1, and for team 1 the board is turned half a turn
+        (`LatticeSpace.opposite`, directions turned by 3), so the player's home is always team 0's
+        corner. One policy then plays both sides.
 
         Parameters
         ----------
@@ -446,7 +490,10 @@ class Tactics:
             ``enemy point`` fill their planes when that side owns the point, and ``clock`` is the
             owner's rounds in a row over ``hold_rounds``, at most 1. ``loses the deadline`` fills
             its plane for the seat that does: the frame hides the seat, and the deadline tells
-            them apart. Cell ``c`` of
+            them apart. Under ``fog``, ``seen`` marks the tiles the team's units see (all of
+            them during deployment), and ``ghost age`` an enemy unit on a tile they don't, by the
+            rounds since it was last seen, this one included, over ``max_rounds``: in a belief
+            (`view`), a unit shown where it was, not where it is. Cell ``c`` of
             the planes is cell ``space.opposite()[c]`` of the board for team 1, and cell ``c``
             for team 0 (`frame`).
 
@@ -516,19 +563,30 @@ class Tactics:
             np.full(state.n_cells, min(1.0, position.hold.clock / self.hold_rounds)),
             np.full(state.n_cells, team == objective.DEADLINE_LOSER),
         ]
+        if self.fog:
+            seen = np.ones(state.n_cells, dtype=np.bool_)
+            age = np.zeros(state.n_cells)
+            if not position.deploying:
+                seen = self.sees(position, team)
+                ghosts = (enemy & ~seen).nonzero()[0]
+                rounds = position.round - u.spotted_round[ghosts] + 1
+                age[ghosts] = np.minimum(1.0, rounds / self.max_rounds)
+            rows += [seen, age]
         out = np.stack(rows).astype(np.float32)
         return out[:, state.space.opposite()] if team == 1 else out
 
     @property
     def revealed(self) -> tuple[str, ...]:
-        """The planes of `reveal`: those of `planes`, since nothing is hidden."""
+        """The planes of `reveal`: those of `planes`."""
         return self.planes
 
     def reveal(self, position: TacticsPosition, team: SupportsIndex, /) -> NDArray[np.float32]:
         """Return the whole position as a team sees it: its observation (`agents.Revealable`).
 
-        The game hides nothing, so a learned model's belief (`agents.muzero_net.WorldNet`) learns
-        to read the board back from its latent states, those it unrolls through its dynamics too.
+        Without ``fog`` the game hides nothing, so a learned model's belief
+        (`agents.muzero_net.WorldNet`) learns to read the board back from its latent states, those
+        it unrolls through its dynamics too. Under fog it is the observation of the position
+        itself, where a player is shown only its `view`.
 
         Parameters
         ----------
@@ -583,6 +641,36 @@ class Tactics:
         board = Frame.board(self.n_verbs, self.space.n_cells)
         return board, Frame.opposite(self.space, self.n_verbs, directions=Verb.FACE)
 
+    def sees(self, position: TacticsPosition, team: SupportsIndex) -> NDArray[np.bool_]:
+        """Return the tiles a team's units see between them, as ``fog`` counts it.
+
+        Parameters
+        ----------
+        position : TacticsPosition
+            A position of this game.
+        team : int
+            0 or 1.
+
+        Returns
+        -------
+        ndarray of bool, shape (n_cells,)
+            The tiles within `UnitStats.sight` of one of the team's units, around walls. Each
+            unit sees its own tile. With or without ``fog``, and in a belief, from where the
+            team's own units stand.
+
+        Raises
+        ------
+        TypeError
+            If ``team`` is not an integer.
+        ValueError
+            If ``team`` is neither 0 nor 1, or the position is not on this game's board.
+        """
+        team = _check_team(team)
+        self._check_space(position.state)
+        state = position.state
+        own = (state.occupied & (state.units.team == team)).nonzero()[0]
+        return self._vision(state.space, state.wall, own, state.units.kind[own])
+
     def active(self, position: TacticsPosition) -> int:
         """Return the cell of the unit whose turn it is, or -1 during deployment or after the end.
 
@@ -610,7 +698,8 @@ class Tactics:
         -------
         ndarray of bool, shape (n_verbs, n_cells)
             ``mask[verb, cell]`` is True where ``Action(verb, cell)`` is legal. All False once
-            the game is over.
+            the game is over. Under ``fog`` it is what would be legal in the belief of the team
+            to move (`view`), so it tells that team nothing it isn't shown.
         """
         turn = self._turn(position)
         mask = np.zeros((self.n_verbs, position.state.n_cells), dtype=np.bool_)
@@ -630,6 +719,12 @@ class Tactics:
         Random draws (the order of turns, and the d20 of each attack) come from a stream of the
         position's seed keyed by its ply, so the same position and action always give the same
         result.
+
+        Under ``fog`` the action is one legal in the mover's belief, and is carried out on the
+        position itself: a move takes the route the mover would plan and stops before the first
+        unit it didn't know of, which it then sees, keeping the movement it has left. Then each
+        side's memory of the other is brought up to date (`Unit.spotted`): what its units see
+        now, and what the mover saw on its way.
 
         Parameters
         ----------
@@ -663,8 +758,10 @@ class Tactics:
             return self._deploy(position, work, verb - Verb.PLACE, cell, dice)
         a = turn.active
         before = int(work.uid[a])
+        side = int(work.team[a])
+        hidden = self._hidden(position)
         if verb == Verb.MOVE:
-            self._move(work, state, a, cell, dice)
+            self._move(work, state, a, cell, dice, turn.state if hidden else None)
         elif verb == Verb.ATTACK:
             work.attacked[a] = True
             work.faced[a] = False
@@ -687,6 +784,8 @@ class Tactics:
             work.facing[a] = verb - Verb.FACE
             work.faced[a] = True
             work.events.append(Turned(before, verb - Verb.FACE))
+        if hidden:
+            self._spot(work, state, position.round, side)
         return self._next(position, work, dice, before)
 
     def odds(
@@ -775,6 +874,13 @@ class Tactics:
         if self._placer(work.kind, work.team) >= 0:
             return work.position(position, position.ply + 1, drew=dice.drew)
         self._new_round(work, dice, 1)
+        if self.fog and position.belief < 0:  # each side saw the other deploy: the fog falls here
+            cells = (work.kind >= 0).nonzero()[0]
+            work.spotted[cells] = cells
+            work.spotted_hp[cells] = work.hp[cells]
+            work.spotted_facing[cells] = work.facing[cells]
+            work.spotted_round[cells] = 1
+            self._spot(work, state, 1, -1)
         return work.position(position, position.ply + 1, round=1, drew=dice.drew)
 
     def _next(
@@ -848,15 +954,38 @@ class Tactics:
             work.engaged[starts] = False
         work.events.append(RoundStarted(round_))
 
-    def _move(self, work: _Work, state: TacticsState, a: int, goal: int, dice: Context) -> None:
-        """Walk the acting unit to ``goal``, tile by tile, springing deferred attacks."""
+    def _move(
+        self,
+        work: _Work,
+        state: TacticsState,
+        a: int,
+        goal: int,
+        dice: Context,
+        believed: TacticsState | None = None,
+    ) -> None:
+        """Walk the acting unit to ``goal``, tile by tile, springing deferred attacks.
+
+        Under fog the route is the one its side would plan, around the units and watched tiles of
+        ``believed``, and the unit stops before the first unit that stands in it after all.
+        """
         space = state.space
         cost = None
-        enemy = (work.kind >= 0) & (work.team != work.team[a]) & (work.watch >= 0)
+        kind, team, watch = work.kind, work.team, work.watch
+        if believed is not None:
+            kind, team, watch = believed.units.kind, believed.units.team, believed.units.watch
+        enemy = (kind >= 0) & (team != work.team[a]) & (watch >= 0)
         if enemy.any():
             cost = np.ones(space.n_cells)
-            cost[work.watch[enemy]] += _WATCHED
-        route = path(space, a, goal, cost=cost, blocked=~state.passable | (work.kind >= 0))
+            cost[watch[enemy]] += _WATCHED
+        route = path(space, a, goal, cost=cost, blocked=~state.passable | (kind >= 0))
+        if believed is not None:
+            met = (work.kind[route[1:]] >= 0).nonzero()[0]
+            if met.size:
+                route = route[: met[0] + 1]
+        work.walked = route
+        if route.size < 2:
+            return
+        goal = int(route[-1])
         coords = space.unravel(route)
         facing = int(work.facing[a])
         uid = int(work.uid[a])
@@ -872,6 +1001,7 @@ class Tactics:
                 work.events.append(Moved(uid, tuple(int(c) for c in route[start : k + 1])))
                 start = k
                 if not self._spring(work, state, there, dice):
+                    work.walked = route[: k + 1]
                     return  # the mover died
         if start < route.size - 1:
             work.events.append(Moved(uid, tuple(int(c) for c in route[start:])))
@@ -1053,6 +1183,132 @@ class Tactics:
         toward = np.array([space.shape[0] - 1 - 2 * q, space.shape[1] - 1 - 2 * r])
         return snap(space, toward, 0)  # twice the vector to the center, in integers
 
+    # Fog.
+
+    def _hidden(self, position: TacticsPosition) -> bool:
+        """Return whether the position hides units from a side: a battle under fog, not a belief."""
+        return self.fog and position.belief < 0 and position.round > 0 and not position.over
+
+    def _sees(
+        self, space: LatticeSpace, wall: NDArray[np.bool_], cell: int, radius: float
+    ) -> NDArray[np.bool_]:
+        """Return the tiles seen from ``cell`` within ``radius``: shape (n_cells,), bool, shared.
+
+        Kept per tile and radius for as long as the walls are the same array, which they are from
+        step to step until an engineer changes one.
+        """
+        if not self._walls or self._walls[0] is not wall:
+            self._walls[:] = [wall]
+            self._sights.clear()
+        seen = self._sights.get((cell, radius))
+        if seen is None:
+            seen = self._sights[cell, radius] = sight(space, cell, wall, radius=radius)
+        return seen
+
+    def _vision(
+        self,
+        space: LatticeSpace,
+        wall: NDArray[np.bool_],
+        cells: NDArray[np.intp],
+        kinds: NDArray[np.int8],
+    ) -> NDArray[np.bool_]:
+        """Return the tiles the units on ``cells`` see between them: shape (n_cells,), bool."""
+        seen = np.zeros(space.n_cells, dtype=np.bool_)
+        for cell, kind in zip(cells.tolist(), kinds.tolist(), strict=True):
+            seen |= self._sees(space, wall, cell, self.units[kind].sight)
+        return seen
+
+    def _spot(self, work: _Work, state: TacticsState, round_: int, mover: int) -> None:
+        """Bring each side's memory of the other's units up to date after a step (`Unit.spotted`).
+
+        A unit on a tile the other side sees is spotted where it stands. One that isn't keeps the
+        tile it was last seen on, until the other side sees that tile without it: then it is
+        believed on the nearest tile that side doesn't see (by hops, then cell id), walls, rubble
+        and the tiles of other ghosts aside. Units are placed in order of cell. The team
+        ``mover`` (-1 for none) also sees what its unit saw along `_Work.walked`, and that unit
+        is last seen on the last tile of its walk the other side sees.
+        """
+        space = state.space
+        wall = work.terrain.get(TacticsState.wall, state.wall)
+        open_ = ~(wall | work.terrain.get(TacticsState.rubble, state.rubble))
+        cells = (work.kind >= 0).nonzero()[0]
+        team = work.team[cells]
+        sides = [cells[team == t] for t in (0, 1)]
+        sees = [self._vision(space, wall, own, work.kind[own]) for own in sides]
+        walked = work.walked
+        if mover >= 0 and walked.size > 1:
+            end = int(walked[-1])
+            if work.kind[end] >= 0 and work.team[end] == mover:  # it lived through its walk
+                radius = self.units[work.kind[end]].sight
+                for tile in walked[:-1].tolist():
+                    sees[mover] = sees[mover] | self._sees(space, wall, tile, radius)
+                glimpsed = walked[sees[1 - mover][walked]]
+                if glimpsed.size:
+                    work.spotted[end] = glimpsed[-1]
+                    work.spotted_hp[end] = work.hp[end]
+                    work.spotted_facing[end] = work.facing[end]
+                    work.spotted_round[end] = round_
+        for side in (0, 1):
+            other = sees[1 - side]
+            seen = other[sides[side]]
+            shown = sides[side][seen]
+            work.spotted[shown] = shown
+            work.spotted_hp[shown] = work.hp[shown]
+            work.spotted_facing[shown] = work.facing[shown]
+            work.spotted_round[shown] = round_
+            lost = sides[side][~seen]
+            gone = other[work.spotted[lost]]
+            if gone.any():
+                free = open_ & ~other
+                free[work.spotted[lost[~gone]]] = False
+                for cell in lost[gone].tolist():
+                    options = free.nonzero()[0]
+                    there = options[hops(space, options, int(work.spotted[cell])).argmin()]
+                    work.spotted[cell] = there
+                    free[there] = False
+
+    def _believed(self, position: TacticsPosition, team: int) -> TacticsPosition:
+        """Return the belief of ``team`` about a position of a game under fog (`view`)."""
+        if self._views and self._views[0][0] is position and self._views[0][1] == team:
+            return self._views[0][2]
+        state = position.state
+        if position.deploying:  # nothing is hidden yet: the same board, to play on in the open
+            belief = TacticsPosition(
+                state, _view_seed(position.seed), ply=position.ply, hold=position.hold, belief=team
+            )
+            self._views[:] = [(position, team, belief)]
+            return belief
+        work = _Work(state, position.hold)
+        cells = state.occupied.nonzero()[0]
+        theirs = cells[work.team[cells] != team]
+        at = work.spotted[theirs]
+        unseen = at != theirs
+        if unseen.any():
+            ghosts = at[unseen]
+            work.relocate(theirs[unseen], ghosts)
+            work.hp[ghosts] = work.spotted_hp[ghosts]
+            work.facing[ghosts] = work.spotted_facing[ghosts]
+            work.moved[ghosts] = 0
+            for flags in (work.swapped, work.attacked, work.faced, work.engaged):
+                flags[ghosts] = False
+            work.watch[ghosts] = -1
+        cells = (work.kind >= 0).nonzero()[0]
+        own = cells[work.team[cells] == team]
+        work.spotted[cells] = cells  # in a belief every unit is where it is shown
+        work.spotted_hp[cells] = work.hp[cells]
+        work.spotted_facing[cells] = work.facing[cells]
+        work.spotted_round[own] = position.round
+        belief = TacticsPosition(
+            work.units.freeze(),
+            _view_seed(position.seed),
+            ply=position.ply,
+            round=position.round,
+            hold=position.hold,
+            belief=team,
+        )
+        self._views[:] = [(position, team, belief)]
+        return belief
+
     # Checks.
 
     def _check_space(self, state: TacticsState) -> None:
@@ -1074,6 +1330,8 @@ class Tactics:
             raise TypeError(f"position must be a TacticsPosition, got {type(position).__name__}")
         self._check_space(position.state)
         turn = _Turn(self, position)
+        if self._hidden(position):  # the decision is the mover's, on what it believes
+            turn = _Turn(self, self._believed(position, turn.team))
         self._last[:] = [(position, turn)]  # holds the position, so `is` can't match another
         return turn
 
@@ -1105,6 +1363,13 @@ def _near(space: LatticeSpace, cell: int, radius: float) -> NDArray[np.int64]:
     """
     indptr, indices = _near_graph(space, radius)
     return indices[indptr[cell] : indptr[cell + 1]]
+
+
+@functools.lru_cache(maxsize=4096)
+def _view_seed(seed: int) -> int:
+    """Return the seed of a game's beliefs: its own stream, which tells none of the game's rolls."""
+    stream = np.random.SeedSequence(seed, spawn_key=(3,))
+    return int(stream.generate_state(1, dtype=np.uint64)[0] >> np.uint64(1))
 
 
 @functools.cache
@@ -1282,9 +1547,41 @@ class _Work:
         self.done = units[U.done]
         self.engaged = units[U.engaged]
         self.watch = units[U.watch]
+        self.spotted = units[U.spotted]
+        self.spotted_hp = units[U.spotted_hp]
+        self.spotted_facing = units[U.spotted_facing]
+        self.spotted_round = units[U.spotted_round]
         self.hold = hold
         self.terrain: dict[Field[np.bool_], NDArray[np.bool_]] = {}
         self.events: list[Event] = []
+        self.walked: NDArray[np.int64] = _NOWHERE
+        """The tiles the acting unit walked this step, its first included: int64, shape (k,)."""
+
+    def relocate(self, cells: NDArray[np.intp], to: NDArray[np.int32]) -> None:
+        """Take the units on ``cells`` off the board and put them on the tiles ``to``.
+
+        All at once, so a unit may land on a tile another of them leaves. ``to`` holds no tile
+        twice, and none with a unit that stays.
+        """
+        absent = (self.uid, self.kind, self.team, self.watch, self.spotted)  # -1 with no unit
+        for values in (
+            *absent,
+            self.hp,
+            self.facing,
+            self.initiative,
+            self.moved,
+            self.swapped,
+            self.attacked,
+            self.faced,
+            self.done,
+            self.engaged,
+            self.spotted_hp,
+            self.spotted_facing,
+            self.spotted_round,
+        ):
+            kept = values[cells]
+            values[cells] = -1 if any(values is each for each in absent) else 0
+            values[to] = kept
 
     def change_terrain(self, state: TacticsState, uid: int, tile: int, *, build: bool) -> None:
         """Move ``tile`` one step up the ladder or down, and record who did it."""
@@ -1321,7 +1618,12 @@ class _Work:
             events=tuple(self.events),
             round=round,
             hold=self.hold,
+            belief=before.belief,
         )
+
+
+_NOWHERE = read_only(np.zeros(0, dtype=np.int64))
+"""A walk of no tiles: what a step that moves no unit walked."""
 
 
 def _check_team(team: SupportsIndex) -> int:

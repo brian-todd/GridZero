@@ -201,6 +201,15 @@ def test_tactics_code_ladder_replicas_have_starts_of_their_own():
     assert code_ladder.first_start(1) - code_ladder.first_start(0) >= 1000
 
 
+def test_tactics_fog_compares_the_open_game_with_fog(capsys):
+    out = ran(capsys, "tactics.fog", "hand", 1, 15, 1)
+    assert "In the open, greedy against itself: 2 games" in out
+    assert "Under fog, greedy against itself: 2 games" in out
+    assert out.count("Greedy with (1, 2, 2, 1, 1) against (3, 2, 1, 1, 1)") == 3
+    assert "under fog, every kind seeing 3" in out
+    assert out.count("The code player at 1 simulations against greedy") == 2
+
+
 def test_tactics_code_ladder_refuses_an_unknown_rival(capsys):
     with pytest.raises(KeyError, match="nobody"):
         ran(capsys, "tactics.code_ladder", "hand", 1, 15, 1, 0, "nobody")

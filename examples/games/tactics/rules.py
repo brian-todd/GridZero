@@ -56,11 +56,15 @@ class UnitStats:
     extra_places : int, default 0
         How many more places each further unit of this kind takes than the one before, at least
         0. Knights have 1: a second knight takes 2 places.
+    sight : float, default 3.0
+        How far it sees under fog (``Tactics.fog``), between centers, around walls as its line of
+        fire goes, positive. Knights see 5 and archers 4: scouts, and eyes for their own range.
 
     Raises
     ------
     TypeError
-        If a number is not an integer (``reach``: a real number), or a flag not a bool.
+        If a number is not an integer (``reach`` and ``sight``: real numbers), or a flag not a
+        bool.
     ValueError
         If a number is out of range.
     """
@@ -80,6 +84,7 @@ class UnitStats:
     braces: bool = False
     places: int = 1
     extra_places: int = 0
+    sight: float = 3.0
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str):
@@ -93,6 +98,8 @@ class UnitStats:
         check_int(self.extra_places, "extra_places", minimum=0)
         if check_real(self.reach, "reach") <= 0:
             raise ValueError(f"reach must be positive, got {self.reach}")
+        if check_real(self.sight, "sight") <= 0:
+            raise ValueError(f"sight must be positive, got {self.sight}")
         for flag in ("formation", "defers", "double_move", "aura", "builds", "braces"):
             if not isinstance(getattr(self, flag), bool):
                 raise TypeError(f"{flag} must be a bool, got {getattr(self, flag)!r}")
@@ -116,8 +123,10 @@ class UnitStats:
 FOOTSOLDIER = UnitStats(
     "footsoldier", hp=5, atk=4, defense=2, move=2, reach=1, formation=True, braces=True
 )
-ARCHER = UnitStats("archer", hp=3, atk=2, defense=1, move=2, reach=3, defers=True)
-KNIGHT = UnitStats("knight", hp=7, atk=2, defense=2, move=3, reach=1, charge=2, extra_places=1)
+ARCHER = UnitStats("archer", hp=3, atk=2, defense=1, move=2, reach=3, defers=True, sight=4)
+KNIGHT = UnitStats(
+    "knight", hp=7, atk=2, defense=2, move=3, reach=1, charge=2, extra_places=1, sight=5
+)
 CAPTAIN = UnitStats("captain", hp=9, atk=4, defense=3, move=2, reach=1, aura=True)
 ENGINEER = UnitStats("engineer", hp=3, atk=2, defense=1, move=2, reach=3, builds=True)
 DEFAULT_UNITS = (FOOTSOLDIER, ARCHER, KNIGHT, CAPTAIN, ENGINEER)

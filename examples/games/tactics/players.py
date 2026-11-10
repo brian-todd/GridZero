@@ -1,10 +1,11 @@
 """Players of Tactics: who picks an action from the legal ones.
 
 A player is a `game.Player`: a callable taking the game, the player it is, what that player is
-shown, the mask of legal actions and a random generator, and returning an action. The game has
-full information, so what a player is shown (`Tactics.view`) is the position itself; a network
-would call `Tactics.observe` on it. Players are frozen dataclasses whose fields are their
-parameters, like the rules, so they can be varied too.
+shown, the mask of legal actions and a random generator, and returning an action. What a player
+is shown (`Tactics.view`) is a position: the game's own, or under fog the one its side believes,
+with the units it doesn't see where it last saw them. The players here read it the same either
+way; a network would call `Tactics.observe` on it. Players are frozen dataclasses whose fields
+are their parameters, like the rules, so they can be varied too.
 """
 
 import functools

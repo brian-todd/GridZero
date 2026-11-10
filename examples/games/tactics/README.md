@@ -9,7 +9,7 @@ center: the first game, and the one the `game` and `agents` layers were first wr
 knights, a captain and an engineer. Every unit takes 1 place, but a second knight takes 2, so a
 side fields 7 or 8 units. Sides alternate placing a unit in their home corner, choosing its kind and tile
 together: the side with fewer units placed goes next, team 0 on a tie, and a side with no room
-left is passed over. Nothing is hidden.
+left is passed over. Deployment is in the open: the fog (below) falls when the battle starts.
 
 **Turns.** Every round each living unit gets one turn, in an order rolled once when the battle
 starts and seen by both sides: the teams alternate, a coin says which starts, each team's units
@@ -17,13 +17,13 @@ come in a random order, the side with more units takes the last turns, and the d
 its turn a unit may move up to its allowance and attack once, in any order (move, attack, move),
 turn to face any direction, and end its turn.
 
-| Kind | HP | Atk | Def | Move | Reach | Passive |
-|---|---|---|---|---|---|---|
-| Footsoldier | 5 | 4 | 2 | 2 | 1 | Gains Def from adjacent footsoldiers (a formation), and braces against knights |
-| Archer | 3 | 2 | 1 | 2 | 3 | May defer its attack onto a tile, and fires when an enemy enters it, with +1 Atk |
-| Knight | 7 | 2 | 2 | 3 | 1 | Charges: +2 Atk after moving its full 3 tiles. A second knight takes 2 places |
-| Captain | 9 | 4 | 3 | 2 | 1 | Lifts the Atk and Def of friends near it |
-| Engineer | 3 | 2 | 1 | 2 | 3 | Builds and breaks terrain |
+| Kind | HP | Atk | Def | Move | Reach | Sight | Passive |
+|---|---|---|---|---|---|---|---|
+| Footsoldier | 5 | 4 | 2 | 2 | 1 | 3 | Gains Def from adjacent footsoldiers (a formation), and braces against knights |
+| Archer | 3 | 2 | 1 | 2 | 3 | 4 | May defer its attack onto a tile, and fires when an enemy enters it, with +1 Atk |
+| Knight | 7 | 2 | 2 | 3 | 1 | 5 | Charges: +2 Atk after moving its full 3 tiles. A second knight takes 2 places |
+| Captain | 9 | 4 | 3 | 2 | 1 | 3 | Lifts the Atk and Def of friends near it |
+| Engineer | 3 | 2 | 1 | 2 | 3 | 3 | Builds and breaks terrain |
 
 - **Attacks** hit on a d20 roll that gets easier as the attacker's Atk exceeds the target's Def,
   and a hit takes Atk from the target's hit points.
@@ -54,13 +54,29 @@ the owner's clock, the capture included, and a flip restarts it at 1.
 | Nobody has captured the point by the end of round 10 | Team 1 loses: it places last, so it must take the first step |
 | The end of round 20 | The point's owner wins |
 
+**Fog.** Once the battle starts, a side sees the other's units only on tiles within the sight of
+one of its own, around walls as a line of fire goes. Deployment, the terrain, the order of turns,
+who holds the point and every death stay in the open. `fog=False` hides nothing, as the game was
+before 2026-11-10.
+
+- **What a side is shown** (`Tactics.view`) is a belief: a position of its own units, of the enemies
+  it sees, and of the rest as ghosts where it last saw them, with the hit points and facing they
+  had then. A ghost that isn't where it was, once the side looks there, is believed on the nearest
+  tile out of its sight. A unit glimpsed on its way is last seen where it left sight.
+- **What a side may do** is what would be legal in its belief, so the legal actions tell it nothing
+  more. A move walks the route the mover would plan and stops before the first unit it didn't know
+  of, which it then sees; it keeps the movement it has left.
+- **A unit always sees what attacks it:** every kind sees at least as far as the furthest reach.
+- **A belief plays on as a game that hides nothing,** so a search (the search player, a code player,
+  AlphaZero) plans on what its player knows and never steps the position it can't see.
+
 The rules are data: `Tactics` and `UnitStats` (`rules.py`) hold every number, and every rule about
 the point is in `objective.py`, so that it can be reworked and measured with `tactics.rules`. The
 boards are symmetric under the half turn (`make_board`), and team 1 sees the board turned half a
 turn, so a network plays both sides the same way. `earlier_rules()` gives the rules before
 2026-11-09 (knights with Atk 3, a double move and a place each, no wall, hold 5, turns shuffled
-every round, engaged until the round ends), which the findings below dated earlier were found
-under. `small_rules()` gives quick games on a 15x15 board, with homes 3 rows deep and 3 rounds to
+every round, engaged until the round ends, no fog), which the findings below dated earlier were
+found under. `small_rules()` gives quick games on a 15x15 board, with homes 3 rows deep and 3 rounds to
 hold: at 4, greedy players ended only 5% of games there by holding, at 3 a quarter.
 
 ## Players
@@ -89,6 +105,7 @@ hold: at 4, greedy players ended only 5% of games there by holding, at 3 a quart
 | `tactics.code_fit <prefix> <lessons...>` | A code player's constants fit to those games, scored on games kept out against simple baselines, and saved as `{prefix}_fit.json`, with what plays as `{prefix}_player.json` |
 | `tactics.code_ladder [weights] [starts] [size] [budgets] [replica] [rivals...]` | The code player against random, greedy or the search player, at equal simulations or equal time, and what a decision costs |
 | `tactics.rules [weights] [starts] [prefix] [simulations] [hold_rounds...]` | How games end, the engineer against an archer, rosters, and pure styles (greedy) or the roster it picks (code player), as tables and `{prefix}_rules.json`, to compare versions of the objective or players |
+| `tactics.fog [weights] [starts] [size] [simulations]` | What fog changes: greedy against itself in the open and under fog, a second knight's worth with and without its longer sight, and a code player's record both ways |
 | `tactics.watch [start] [prefix] [players...]` | One game, decision by decision, in a window or a GIF (random, greedy, sitter, search) |
 | `tactics.zero_scratch <minutes> [prefix] ...` | AlphaZero on a 15x15 board, from scratch or after imitating greedy, in a time box, with endings, picks and work by generation |
 | `tactics.zero_check <weights> [starts] [simulations] [rivals...]` | The AlphaZero player on saved weights against the network alone, greedy or search |
@@ -98,6 +115,23 @@ Run each as `uv run python run.py <command>`; `--help` prints an experiment's do
 self-play on the GPU.
 
 ## What we found
+
+Everything dated before 2026-11-10 was measured without fog (`fog=False`), which was the game then.
+
+**Fog** (2026-11-10, `tactics.fog` with the fit code player, 15x15, 96 games a line, where about 5
+wins is noise; the scouting lines also on 25x25 with 480 games).
+
+- **Fog hides most of the other side:** a side deciding doesn't see 61% of the enemy's units on
+  15x15 and 71% on 25x25.
+- **It barely changes greedy's games:** 5.3 rounds against 5.4, 33% ended by holding against 27%.
+  Greedy walks at where it last saw the enemy, and the armies meet at the point either way.
+- **A planner loses its edge:** the code player at 128 simulations beat greedy 69-27 in the open
+  and 51-45 under fog, about what it scores with no search to speak of (48-48 at 32 simulations
+  both ways). With both sides shown everything, fog's other rules unchanged, it scored 69-27 again:
+  the loss is what it doesn't know. Its search plans against ghosts where it last saw them.
+- **Greedy gets nothing from a scout:** fielding a second knight for two footsoldiers won 43% in
+  the open, 43% under fog and 45% with knights seeing no further than the rest (25x25: 49%, 51% and
+  48%). It reads greedy, which doesn't act on what it sees further off, not the knight.
 
 **The default rules** (2026-11-09, 25x25, starts of their own: a round-robin of six rosters, 480 games a
 match for greedy and 96 for the code player at 128 simulations, and two matches for the search player at
@@ -299,7 +333,7 @@ experiment can make any more. `zero_check` still plays saved full-size weights.
 
 | File | What it holds |
 |---|---|
-| `game.py` | `Tactics`: the rules, `start`, `legal`, `step`, `view`, `odds`, and the observation planes for networks |
+| `game.py` | `Tactics`: the rules, `start`, `legal`, `step`, `view` (a belief under fog), `sees`, `odds`, and the observation planes for networks |
 | `rules.py` | `UnitStats`, the default kinds and caps, `default_roster`, and the d20 rule |
 | `objective.py` | Every rule about the point: captures, the clock and how a game ends |
 | `board.py` | Symmetric boards with walls, rubble, homes and the point |

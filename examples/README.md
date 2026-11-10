@@ -14,7 +14,7 @@ or rules, its players, how to run its experiments, and what they found.
 | [`simulations/biomes`](simulations/biomes) | Grassland and forest on a planet, each with its grazers, and wolves that hunt in both | Nested states, two levels deep, and apparent competition |
 | [`simulations/settlers`](simulations/settlers) | Farmers and herders settling a world of seasons, droughts, raids and worn-out soil | Eight phases over thousands of steps |
 | [`simulations/population_evolution`](simulations/population_evolution) | One founder species on an empty planet, adapting to its climates and splitting into species | A heritable trait as a component axis, against exact theory |
-| [`games/tactics`](games/tactics) | A two-player skirmish on a 25x25 hex board: pick a squad, fight over one point, and change the terrain with an engineer | Dice, a choice of pieces, an objective built to be reworked, search and AlphaZero on a large board |
+| [`games/tactics`](games/tactics) | A two-player skirmish on a 25x25 hex board under fog of war: pick a squad, fight over one point, and change the terrain with an engineer | Dice, a choice of pieces, an objective built to be reworked, units a side can't see, search and AlphaZero on a large board |
 | [`games/in_a_row`](games/in_a_row) | k in a row, from tic-tac-toe to Connect Four | AlphaZero from scratch, against exact values; code players fit to an agent; a page to play them on |
 | [`games/voronoi`](games/voronoi) | The Voronoi game on a planet: stones on land, the most land nearest one's stones wins | Any number of players, off a lattice |
 | [`games/colonies`](games/colonies) | Orders on a planet under fog of war, each round resolved as a simulation | Hidden information, moves made at once, players knocked out, and MuZero |

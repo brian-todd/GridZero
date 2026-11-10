@@ -38,7 +38,9 @@ def make_battle() -> BattleFactory:
     hold=NOBODY)`` puts the pieces on an open board with the given walls and rubble, as axial
     ``(q, r)`` pairs, with no point unless ``point`` names its tile, so that tests of other
     mechanics may stand anywhere. Units take turns in the order listed (their initiative), unless
-    a piece sets ``initiative``. Each gets its kind's full hp unless it sets ``hp``.
+    a piece sets ``initiative``. Each gets its kind's full hp unless it sets ``hp``. Under fog
+    each was last seen where it stands, as it is, in this round, unless it sets ``spotted`` and
+    the like.
     """
 
     def factory(
@@ -82,9 +84,21 @@ def make_battle() -> BattleFactory:
                     continue
                 if name not in extras:
                     extras[name] = np.zeros(n, dtype=type(value))
-                    if name == "watch":
+                    if name in ("watch", "spotted"):
                         extras[name][:] = -1
                 extras[name][c] = value
+            if game.fog:  # as a battle starts: last seen where it stands, unless the piece says
+                seen = {
+                    "spotted": c,
+                    "spotted_hp": arrays["hp"][c],
+                    "spotted_facing": p.extra.get("facing", 0),
+                    "spotted_round": round,
+                }
+                for name, value in seen.items():
+                    if name not in p.extra:
+                        if name not in extras:
+                            extras[name] = np.full(n, -1 if name == "spotted" else 0)
+                        extras[name][c] = value
         arrays.update(extras)
         for name, value in arrays.items():
             values[getattr(TacticsState.units, name)] = value

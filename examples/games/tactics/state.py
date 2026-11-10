@@ -48,6 +48,16 @@ class Unit(NestedState):
     """Was attacked this round: later attackers get a bonus."""
     watch = Field(np.int32, default=-1)
     """The tile an archer deferred its attack onto, or -1."""
+    spotted = Field(np.int32, default=-1)
+    """Under fog, the tile where the other side believes the unit to be: its own while that side
+    sees it, else where it was last seen, or the hidden tile nearest to there once that side has
+    looked there and found it gone. -1 without fog, and before the battle starts."""
+    spotted_hp = Field(np.int16)
+    """Its hit points when the other side last saw it."""
+    spotted_facing = Field(np.int8)
+    """Its facing when the other side last saw it."""
+    spotted_round = Field(np.int16)
+    """The round in which the other side last saw it."""
 
 
 class TacticsState(State):
@@ -145,10 +155,15 @@ class TacticsPosition(Position[TacticsState, Event]):
         0 during deployment, then the round being played, from 1.
     hold : Hold, default NOBODY
         Who holds the point.
+    belief : int, default -1
+        The team whose belief this is, under fog (`Tactics.view`): its own units as they are, and
+        the other side's where it sees them or last did. -1 for the position itself. A belief
+        is played on as a game that hides nothing, so a search plans on what its player knows.
     """
 
     round: int = 0
     hold: Hold = NOBODY
+    belief: int = -1
 
     @property
     def deploying(self) -> bool:

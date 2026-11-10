@@ -24,7 +24,7 @@ def test_tactics_is_revealable():
     check_revealable(GAME, check_game(GAME, RandomPlayer(), range(1)))
 
 
-def test_what_is_revealed_is_the_observation_since_nothing_is_hidden():
+def test_what_is_revealed_is_the_observation_of_the_position_itself():
     position = GAME.start(3)
     assert GAME.revealed == GAME.planes
     for team in (0, 1):

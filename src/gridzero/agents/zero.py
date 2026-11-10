@@ -317,7 +317,9 @@ def self_play[G: Learnable[Any], P: Position[State, object]](
 ) -> tuple[Experience, list[Played[P]]]:
     """Play games of a player against itself, all at once, and keep decisions to learn from.
 
-    Each game searches its decisions in turn, as ``player.search`` does; the games' searches
+    Each game searches its decisions in turn, as ``player.search`` does, from what the game shows
+    the deciding player (``game.view``: the position itself, unless the game hides something
+    and shows a position of what the player believes); the games' searches
     take a leaf each, and the player's evaluator judges those leaves in one call, so a batched
     evaluator (`net.NetEvaluator` on a GPU) sees as many positions per call as games still
     running. Each searched decision is kept with probability ``keep``: the observation, the
@@ -427,7 +429,8 @@ class _Running[P: Position[State, object]]:
                     verb, cell = np.argwhere(legal)[0]
                     self.position = game.step(self.position, (int(verb), int(cell)))
                 else:
-                    self.search = _Search(player, game, self.position, self.rng, legal)
+                    shown = game.view(self.position, game.player(self.position))
+                    self.search = _Search(player, game, shown, self.rng, legal)
                     self.searched += 1
 
     def _keep(
@@ -436,7 +439,8 @@ class _Running[P: Position[State, object]]:
         """Keep the decision at the current position, in the deciding player's frame."""
         mover = game.player(self.position)
         own = game.frame(mover).into(legal)
-        self.obs.append(np.rint(game.observe(self.position, mover) * 255).astype(np.uint8))
+        shown = game.view(self.position, mover)
+        self.obs.append(np.rint(game.observe(shown, mover) * 255).astype(np.uint8))
         self.legal.append(np.packbits(own.ravel()))
         self.policy.append(game.frame(mover).into(policy)[own].astype(np.float32))
         self.movers.append(mover)

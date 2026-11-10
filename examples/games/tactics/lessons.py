@@ -197,7 +197,7 @@ class Lessons:
 def positions_of(
     game: Tactics, lessons: Lessons, index: int
 ) -> Iterator[tuple[TacticsPosition, Action]]:
-    """Replay a game of lessons.
+    """Replay a game of lessons, as the player deciding was shown it.
 
     Parameters
     ----------
@@ -211,7 +211,8 @@ def positions_of(
     Yields
     ------
     position : TacticsPosition
-        The position at each decision, in order.
+        What the teacher was shown at each decision, in order (`Tactics.view`): under fog what
+        its side believed, which is what it judged, else the position itself.
     action : Action
         What the teacher did there.
     """
@@ -219,7 +220,7 @@ def positions_of(
     first, last = lessons.game_start[index], lessons.game_start[index + 1]
     for verb, cell in zip(lessons.verb[first:last], lessons.cell[first:last], strict=True):
         action = Action(int(verb), int(cell))
-        yield position, action
+        yield game.view(position, game.player(position)), action
         position = game.step(position, action)
 
 

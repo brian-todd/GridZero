@@ -27,7 +27,8 @@ EVAL_SEED = 2_000_000
 def small_rules() -> Tactics:
     """Return the rules for quick games: the default team and caps, on a 15x15 board.
 
-    Chosen with greedy players (2026-11-09) for the most games ended by holding without the first
+    Chosen with greedy players (2026-11-09, without fog, which changes these figures little) for
+    the most games ended by holding without the first
     capturer winning nearly all of them: 25% by holding, in 5.5 rounds and about 184 decisions, the
     first capturer winning 65%. Holding 4 rounds, as on the full board, ended 5% of games there; 2
     rounds ended 47-64%, the first capturer winning 70-80%. On 9x9, 97% to 100% end by killing
@@ -45,8 +46,8 @@ def earlier_rules() -> Tactics:
     """Return the rules before knights charged and footsoldiers braced, to compare against.
 
     A knight then had Atk 3, a double move, and a place each; footsoldiers didn't brace; holding the
-    point took 5 rounds; the order of turns was shuffled every round, and a unit stayed engaged
-    until the round ended.
+    point took 5 rounds; the order of turns was shuffled every round, a unit stayed engaged
+    until the round ended, and nothing was hidden.
 
     Returns
     -------
@@ -60,7 +61,13 @@ def earlier_rules() -> Tactics:
         CAPTAIN,
         ENGINEER,
     )
-    return Tactics(units=units, hold_rounds=5, shuffle_each_round=True, engaged_until_turn=False)
+    return Tactics(
+        units=units,
+        hold_rounds=5,
+        shuffle_each_round=True,
+        engaged_until_turn=False,
+        fog=False,
+    )
 
 
 @dataclass(frozen=True, eq=False)
