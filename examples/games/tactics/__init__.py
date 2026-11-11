@@ -60,9 +60,10 @@ SearchPlayer, Plan, Judgment, material, standing
 Lessons, lessons_of, positions_of, teach
     A search player's games kept to learn from, as seeds and actions, with what it judged.
 CodeEvaluator, HAND_PICKED, SEARCH_C_SCALE, value_features, move_features, VALUE_FEATURES,
-MOVE_FEATURES
+MOVE_FEATURES, look_ahead
     A code player: judges positions by named features and constants, for `agents.AlphaZeroPlayer`,
-    and the value weight it searches with.
+    the value weight it searches with, and the position greedy play reaches a few unit turns on,
+    where its value may be read.
 
 `pictures.draw` draws a position on matplotlib's axes, with `render.cells`. It is not imported
 here, so importing the game doesn't import matplotlib.
@@ -77,6 +78,7 @@ from .code_player import (
     SEARCH_C_SCALE,
     VALUE_FEATURES,
     CodeEvaluator,
+    look_ahead,
     move_features,
     value_features,
 )
@@ -167,6 +169,7 @@ __all__ = [
     "hits",
     "homes",
     "lessons_of",
+    "look_ahead",
     "make_board",
     "material",
     "move_features",

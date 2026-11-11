@@ -46,6 +46,9 @@ Each README dates its findings; these are the main ones.
   A code player fit to the search player beats greedy 135-57 and matches the search player at a third of
   its time per decision, also on a board it wasn't fit on, once one weight is corrected by hand: the
   search's own value is blind to knights.
+  Under fog its static value falls behind (102-90 against greedy); read 4 unit turns of greedy
+  play ahead it beats greedy 131-61 and is level with the search player, in about two thirds of a
+  second a unit's turn.
 - **Self-play drifts into draws** in both two-player board games. A study on a small board
   against the exact solver is open.
 - **The simulations match their theory:** R*, the ideal free distribution, a trophic cascade,

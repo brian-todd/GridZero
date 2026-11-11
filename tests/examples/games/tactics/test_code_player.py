@@ -14,6 +14,7 @@ from examples.games.tactics import (
     RandomPlayer,
     Tactics,
     Verb,
+    look_ahead,
     move_features,
     small_rules,
     value_features,
@@ -426,6 +427,8 @@ def test_a_weight_naming_no_feature_is_refused():
         ({"value": (float("nan"), *[0.0] * (len(VALUE_FEATURES) - 1))}, ValueError),
         ({"prior": ("a", *[0.0] * (len(MOVE_FEATURES) - 1))}, TypeError),
         ({"intercept": float("inf")}, ValueError),
+        ({"lookahead": -1}, ValueError),
+        ({"lookahead": True}, TypeError),
     ],
 )
 def test_bad_constants_are_refused(change, error):
@@ -433,19 +436,88 @@ def test_bad_constants_are_refused(change, error):
         dataclasses.replace(HAND_PICKED, **change)
 
 
-def test_the_evaluator_scores_each_position_as_its_features_say_alone_or_in_a_batch():
+def test_a_lookahead_that_is_not_an_integer_is_refused(not_an_integer):
+    with pytest.raises(TypeError, match="lookahead"):
+        dataclasses.replace(HAND_PICKED, lookahead=not_an_integer)
+
+
+@pytest.mark.parametrize("lookahead", [0, 2])
+def test_the_evaluator_scores_each_position_as_its_features_say_alone_or_in_a_batch(lookahead):
+    evaluator = dataclasses.replace(HAND_PICKED, lookahead=lookahead)
     rng = np.random.default_rng(7)
     positions = [p for p, _ in play_random(GAME, 7, rng) if not p.over][::20]
     legal = [GAME.legal(p) for p in positions]
-    logits, values = HAND_PICKED(GAME, positions, legal)
+    logits, values = evaluator(GAME, positions, legal)
     assert len(logits) == len(positions)
     assert ((values >= 0) & (values <= 1)).all()
     for i, (position, mask) in enumerate(zip(positions, legal, strict=True)):
-        one_logits, one_values = HAND_PICKED(GAME, [position], [mask])
+        one_logits, one_values = evaluator(GAME, [position], [mask])
         assert one_values[0] == values[i]
         assert one_logits[0].tolist() == logits[i].tolist()
         assert logits[i].shape == (np.count_nonzero(mask),)
         assert np.isfinite(logits[i]).all()
+
+
+def battles(seed, every=15):
+    """Return positions in battle, not over, of a game played at random."""
+    played = play_random(GAME, seed, np.random.default_rng(seed))
+    return [p for p, _ in played if not p.over and not p.deploying][::every]
+
+
+def same(a, b):
+    """Whether two positions are one: reached by as many steps, every field equal."""
+    return a.ply == b.ply and all(a.state[f].tobytes() == b.state[f].tobytes() for f in a.state)
+
+
+def test_looking_ahead_is_where_greedy_against_itself_ends_that_many_turns():
+    greedy = GreedyPlayer()
+    for start in battles(3, every=40):
+        rng = np.random.default_rng(0)
+        position, ended = start, 0
+        assert look_ahead(GAME, start, 0) is start
+        while not position.over and ended < 3:
+            action = greedy(GAME, GAME.player(position), position, GAME.legal(position), rng)
+            position = GAME.step(position, action)
+            if action.verb == Verb.END:
+                ended += 1
+                assert same(look_ahead(GAME, start, ended), position)
+        assert ended == 3 or look_ahead(GAME, start, 3).over
+
+
+def test_a_value_that_looks_ahead_is_the_value_of_the_position_ahead_and_the_prior_stays():
+    positions = battles(5)
+    legal = [GAME.legal(p) for p in positions]
+    ahead = [look_ahead(GAME, p, 3) for p in positions]
+    assert {p.over for p in ahead} == {False, True}  # a batch of both: some end on the way
+    logits, values = dataclasses.replace(HAND_PICKED, lookahead=3)(GAME, positions, legal)
+    for value, there in zip(values, ahead, strict=True):
+        if there.over:
+            assert value == (0.5 if there.winner is None else float(there.winner == 0))
+        else:
+            assert value == HAND_PICKED(GAME, [there], [GAME.legal(there)])[1][0]
+    here_logits, here = HAND_PICKED(GAME, positions, legal)
+    assert values.tolist() != here.tolist()
+    for one, other in zip(logits, here_logits, strict=True):
+        assert one.tolist() == other.tolist()
+
+
+@pytest.mark.parametrize(("owner", "value"), [(0, 1.0), (1, 0.0)])
+def test_a_game_that_ends_on_the_way_reads_as_its_result(make_battle, owner, value):
+    pieces = [piece(7, 7, FOOT, owner), piece(1, 1, FOOT, 1 - owner)]
+    hold = Hold(owner, GAME.hold_rounds - 1)  # the point is the owner's at this round's end
+    position = make_battle(pieces, game=GAME, point=(7, 7), hold=hold)
+    legal = [GAME.legal(position)]
+    assert look_ahead(GAME, position, 2).winner == owner
+    assert dataclasses.replace(HAND_PICKED, lookahead=2)(GAME, [position], legal)[1][0] == value
+    assert 0 < dataclasses.replace(HAND_PICKED, lookahead=1)(GAME, [position], legal)[1][0] < 1
+
+
+def test_positions_in_deployment_are_read_as_they_stand():
+    start = GAME.start(0)
+    legal = [GAME.legal(start)]
+    assert look_ahead(GAME, start, 4) is start
+    looking = dataclasses.replace(HAND_PICKED, lookahead=4)
+    assert looking(GAME, [start], legal)[1][0] == HAND_PICKED(GAME, [start], legal)[1][0]
 
 
 def test_the_intercept_alone_is_the_lean_of_the_seats():
@@ -491,9 +563,21 @@ def test_it_plays_the_rivals_it_meets_without_error():
     assert tally(records).draws == 0
 
 
-def test_saved_constants_load_the_same(tmp_path):
+@pytest.mark.parametrize("lookahead", [0, 4])
+def test_saved_constants_load_the_same(tmp_path, lookahead):
+    evaluator = dataclasses.replace(HAND_PICKED, lookahead=lookahead)
+    path = tmp_path / "fit.json"
+    evaluator.save(path)
+    assert CodeEvaluator.load(path) == evaluator
+    assert json.loads(path.read_text())["lookahead"] == lookahead
+
+
+def test_constants_saved_before_values_looked_ahead_load_without_it(tmp_path):
     path = tmp_path / "fit.json"
     HAND_PICKED.save(path)
+    data = json.loads(path.read_text())
+    del data["lookahead"]
+    path.write_text(json.dumps(data))
     assert CodeEvaluator.load(path) == HAND_PICKED
 
 

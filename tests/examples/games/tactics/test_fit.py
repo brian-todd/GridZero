@@ -18,6 +18,7 @@ from examples.games.tactics import (
     value_features,
 )
 from examples.games.tactics.fit import (
+    LOOKAHEAD,
     Cases,
     PriorScore,
     cases_of,
@@ -27,6 +28,7 @@ from examples.games.tactics.fit import (
     game_cases,
     join_cases,
     overruled,
+    playing,
     prior_score,
     value_score,
 )
@@ -353,3 +355,10 @@ def test_overruled_takes_only_the_knights_weight_from_the_hand_picked_constants(
     assert played.value[:knight] == fitted.value[:knight]
     assert played.value[knight + 1 :] == fitted.value[knight + 1 :]
     assert (played.intercept, played.prior) == (fitted.intercept, fitted.prior)
+    assert played.lookahead == fitted.lookahead == 0
+
+
+def test_the_constants_that_play_are_the_fit_overruled_and_looking_ahead():
+    fitted, _ = fit(made_cases(games=6, decisions=6), 0)
+    assert playing(fitted) == replace(overruled(fitted), lookahead=LOOKAHEAD)
+    assert LOOKAHEAD > 0

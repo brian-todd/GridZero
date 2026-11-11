@@ -2,7 +2,8 @@
 
 A code player is `agents.AlphaZeroPlayer` on an evaluator that is plain code: named features of a
 position and of each legal action, and constants. It needs no network, so it can ship, and it
-still searches. `HAND_PICKED` holds constants picked by hand, not fitted.
+still searches. `HAND_PICKED` holds constants picked by hand, not fitted. An evaluator can look
+ahead: read its value after `GreedyPlayer` has played some unit turns on for both sides.
 
 A search asks for one position at a time, hundreds of times a second, so features stay cheap: walks
 to the point (about 8 us) and distances between units (about 14 us), but no lines of fire (about
@@ -20,10 +21,11 @@ import numpy as np
 from numpy.typing import NDArray
 
 from examples.games.fitting import sigmoid, weighted
-from gridzero.core import check_real, hops, snap, steps
+from gridzero.core import check_int, check_real, hops, snap, steps
 
 from . import objective
 from .game import Tactics
+from .players import GreedyPlayer
 from .state import TacticsPosition, TacticsState, Verb
 
 KINDS = ("footsoldier", "archer", "knight", "captain", "engineer")
@@ -440,6 +442,12 @@ class CodeEvaluator:
     `value_features`. The prior's logit of an action is ``sum_j prior[j] * g[j]`` over
     `move_features`.
 
+    With ``lookahead`` the value is read further on: of the position `look_ahead` reaches, where
+    `GreedyPlayer` has ended that many unit turns, playing for both sides, or the result if the
+    game ends on the way. The features hold where units stand and not what they are about to
+    do; a few turns on, that has happened. It costs those turns of play a position, and the
+    prior is still of the position itself.
+
     Parameters
     ----------
     value : tuple of float
@@ -448,18 +456,24 @@ class CodeEvaluator:
         The value's score when every feature is 0, in logits: the lean of the seats.
     prior : tuple of float
         A weight per name in `MOVE_FEATURES`, in logits.
+    lookahead : int, default 0
+        The unit turns greedy plays on before the value is read, at least 0. Positions in
+        deployment are read as they stand.
 
     Raises
     ------
     TypeError, ValueError
-        If a constant is not a finite real, or a tuple has the wrong length.
+        If a constant is not a finite real, a tuple has the wrong length, or ``lookahead`` is
+        not an integer of at least 0.
     """
 
     value: tuple[float, ...]
     intercept: float
     prior: tuple[float, ...]
+    lookahead: int = 0
 
     def __post_init__(self) -> None:
+        check_int(self.lookahead, "lookahead", minimum=0)
         for weights, names, name in (
             (self.value, VALUE_FEATURES, "value"),
             (self.prior, MOVE_FEATURES, "prior"),
@@ -486,11 +500,16 @@ class CodeEvaluator:
         ValueError
             If the rules have other kinds of unit, or a score overflows.
         """
-        values = sigmoid(weighted(value_features(game, positions), self.value, self.intercept))
         logits = [
             weighted(move_features(game, position, mask), self.prior, 0.0)
             for position, mask in zip(positions, legal, strict=True)
         ]
+        read = [look_ahead(game, position, self.lookahead) for position in positions]
+        values = np.array([_result(position) for position in read])
+        going = [i for i, position in enumerate(read) if not position.over]
+        if going:
+            features = value_features(game, [read[i] for i in going])
+            values[going] = sigmoid(weighted(features, self.value, self.intercept))
         return logits, values
 
     def save(self, path: str | Path) -> None:
@@ -507,6 +526,7 @@ class CodeEvaluator:
                     "value": dict(zip(VALUE_FEATURES, self.value, strict=True)),
                     "intercept": self.intercept,
                     "prior": dict(zip(MOVE_FEATURES, self.prior, strict=True)),
+                    "lookahead": self.lookahead,
                 },
                 indent=2,
             )
@@ -536,7 +556,48 @@ class CodeEvaluator:
             tuple(float(data["value"][name]) for name in VALUE_FEATURES),
             float(data["intercept"]),
             tuple(float(data["prior"][name]) for name in MOVE_FEATURES),
+            int(data.get("lookahead", 0)),  # files from before it looked ahead say nothing
         )
+
+
+_GREEDY = GreedyPlayer()
+"""Who plays on when a value looks ahead."""
+
+
+def look_ahead(game: Tactics, position: TacticsPosition, turns: int) -> TacticsPosition:
+    """Return the position after `GreedyPlayer` has played some unit turns on, for both sides.
+
+    Greedy plays whoever is to move until it has ended ``turns`` turns or the game is over, its
+    ties broken the same way every time, so the same position always leads to the same one.
+
+    Parameters
+    ----------
+    game : Tactics
+        The rules.
+    position : TacticsPosition
+        A position, which a search has as its side believes it.
+    turns : int
+        How many turns greedy ends, at least 0.
+
+    Returns
+    -------
+    TacticsPosition
+        The position reached: ``position`` itself at 0 turns, in deployment or once over.
+    """
+    if position.deploying:
+        return position
+    rng = np.random.default_rng(0)
+    ended = 0
+    while ended < turns and not position.over:
+        action = _GREEDY(game, game.player(position), position, game.legal(position), rng)
+        position = game.step(position, action)
+        ended += action.verb == Verb.END
+    return position
+
+
+def _result(position: TacticsPosition) -> float:
+    """Return player 0's value of a finished game: 1 won, 0 lost; 0.5 drawn, or not finished."""
+    return 0.5 if position.winner is None else float(position.winner == 0)
 
 
 def _by_name(names: tuple[str, ...], **weights: float) -> tuple[float, ...]:

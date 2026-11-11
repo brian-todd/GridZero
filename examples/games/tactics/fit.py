@@ -8,8 +8,12 @@ action is the only label that says what to do at each step of one.
 
 Both are scored on whole games kept out of the fit, against what simple rules do on the same games:
 the mean value, material alone, the verb alone, `HAND_PICKED` and `GreedyPlayer`.
+
+The constants that play differ from a fit in two ways, both decided by how they played: the
+weights `OVERRULED`, and the value read `LOOKAHEAD` unit turns ahead (`playing`).
 """
 
+import dataclasses
 import math
 import multiprocessing
 from collections.abc import Sequence
@@ -50,6 +54,13 @@ OVERRULED = ("hp_knight",)
 """The value's weights taken from `HAND_PICKED` in the constants that play. The teacher's value is
 flat in a knight's lead, though the side ahead goes on to win more often, and a fit copies that: on
 the prior of a fit, this one weight is the difference between 35% and 51% against greedy."""
+LOOKAHEAD = 4
+"""The unit turns the constants that play look ahead (`CodeEvaluator`'s ``lookahead``). The fit is
+of positions as they stand, and what a static value lacks is what the next few turns do. Under fog
+on 15x15, against greedy over 192 games, greedy deploying: at 128 simulations the same weights
+scored 111-81 as the position stands, 131-61 read 3 turns ahead and 137-55 read 4; at 64
+simulations 102-90 read 2 turns ahead and 138-54 read 4, in about half a second a unit's turn.
+Refitting the weights to the positions ahead changed nothing (133-59)."""
 
 
 class Cases(NamedTuple):
@@ -265,7 +276,7 @@ def fit(cases: Cases, seed: int) -> tuple[CodeEvaluator, FitScore]:
 
 
 def overruled(fitted: CodeEvaluator) -> CodeEvaluator:
-    """Return a fit's constants for playing: `OVERRULED` weights taken from `HAND_PICKED`.
+    """Return a fit with the `OVERRULED` weights taken from `HAND_PICKED`.
 
     Parameters
     ----------
@@ -281,7 +292,24 @@ def overruled(fitted: CodeEvaluator) -> CodeEvaluator:
         HAND_PICKED.value[j] if name in OVERRULED else fitted.value[j]
         for j, name in enumerate(VALUE_FEATURES)
     )
-    return CodeEvaluator(value, fitted.intercept, fitted.prior)
+    return dataclasses.replace(fitted, value=value)
+
+
+def playing(fitted: CodeEvaluator) -> CodeEvaluator:
+    """Return a fit's constants for playing: `overruled`, and looking `LOOKAHEAD` turns ahead.
+
+    Parameters
+    ----------
+    fitted : CodeEvaluator
+        A fit.
+
+    Returns
+    -------
+    CodeEvaluator
+        The fit's constants but for the weights of `OVERRULED`, its value read `LOOKAHEAD` unit
+        turns ahead.
+    """
+    return dataclasses.replace(overruled(fitted), lookahead=LOOKAHEAD)
 
 
 def fit_value(

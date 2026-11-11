@@ -3,7 +3,8 @@
 Reads what ``tactics.code_games`` saved, on `small_rules`. Prints the fit's value and prior beside
 simple baselines on the same games, then its constants by name, and saves them as
 ``{prefix}_fit.json``. What plays is ``{prefix}_player.json``, the same but for the weights
-`fit.OVERRULED`, for ``tactics.code_ladder``.
+`fit.OVERRULED` and a value read `fit.LOOKAHEAD` unit turns ahead (`fit.playing`), for
+``tactics.code_ladder``.
 
 Run with ``uv run python run.py tactics.code_fit prefix lessons.npz [more.npz...]``. Fit a teacher
 that works apart from one that doesn't: one that never works says nothing of when to.
@@ -14,7 +15,7 @@ from pathlib import Path
 
 from examples.games import CORES
 from examples.games.tactics import MOVE_FEATURES, VALUE_FEATURES, Lessons, small_rules
-from examples.games.tactics.fit import OVERRULED, cases_of, fit, overruled
+from examples.games.tactics.fit import LOOKAHEAD, OVERRULED, cases_of, fit, playing
 
 SEED = 6_500_000  # which games are kept out
 
@@ -62,8 +63,11 @@ def main(prefix: str, *lessons: str) -> None:
     print(f"Value: {_named(VALUE_FEATURES, evaluator.value)}, at 0 {evaluator.intercept:+.3f}")
     print(f"Prior: {_named(MOVE_FEATURES, evaluator.prior)}")
     evaluator.save(path)
-    print(f"Taken from the hand-picked constants to play: {', '.join(OVERRULED)}.")
-    overruled(evaluator).save(f"{prefix}_player.json")
+    print(
+        f"To play: {', '.join(OVERRULED)} taken from the hand-picked constants, "
+        f"the value read {LOOKAHEAD} unit turns ahead."
+    )
+    playing(evaluator).save(f"{prefix}_player.json")
 
 
 def _named(names: tuple[str, ...], weights: tuple[float, ...]) -> str:

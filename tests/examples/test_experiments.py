@@ -30,6 +30,7 @@ from examples.games.tactics import EVAL_SEED as TACTICS_SEED
 from examples.games.tactics import Lessons as TacticsLessons
 from examples.games.tactics import SearchPlayer, Tactics, lessons_of, small_rules
 from examples.games.tactics.experiments import code_ladder
+from examples.games.tactics.fit import LOOKAHEAD
 from examples.games.voronoi import EVAL_SEED as VORONOI_SEED
 from examples.games.voronoi import Greedy, Voronoi
 from examples.simulations.biomes import Biomes
@@ -185,6 +186,8 @@ def test_tactics_code_games_refuses_a_prefix_already_used(capsys, tmp_path):
 def test_tactics_code_ladder(capsys):
     out = ran(capsys, "tactics.code_ladder", "hand", 1, 15, 1)
     assert "1 simulations: " in out
+    assert " ms a decision, " in out
+    assert " ms a unit's turn." in out
     assert "Against random " in out
     assert ", greedy " in out
 
@@ -225,8 +228,10 @@ def test_tactics_code_fit_saves_constants_the_ladder_plays(capsys, tmp_path):
     assert "Value on 1 games kept out" in out
     assert "Prior on 1 games kept out" in out
     saved = tmp_path / "code_fit.json"
-    assert set(json.loads(saved.read_text())) == {"value", "intercept", "prior"}
+    assert set(json.loads(saved.read_text())) == {"value", "intercept", "prior", "lookahead"}
+    assert json.loads(saved.read_text())["lookahead"] == 0
     played = tmp_path / "code_player.json"
+    assert json.loads(played.read_text())["lookahead"] == LOOKAHEAD
     assert "Against random " in ran(capsys, "tactics.code_ladder", played, 1, 15, 1)
 
 

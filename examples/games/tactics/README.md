@@ -93,7 +93,9 @@ hold: at 4, greedy players ended only 5% of games there by holding, at 3 a quart
 - Through `agents`: `UniformPlayer`, `NetPlayer` and `AlphaZeroPlayer` on a `PolicyNet`, since
   `Tactics` is an `agents.Learnable`.
 - A code player: `AlphaZeroPlayer` on `CodeEvaluator`, plain code of named features and constants
-  and no network. `HAND_PICKED` holds constants picked by hand.
+  and no network. `HAND_PICKED` holds constants picked by hand. With `lookahead` it reads its value
+  after greedy has played that many unit turns on for both sides, as the constants that play do.
+  The experiments have it deploy as greedy does (`Fielded`).
 
 ## Experiments
 
@@ -102,8 +104,8 @@ hold: at 4, greedy players ended only 5% of games there by holding, at 3 a quart
 | `tactics.tournament [starts] [prefix]` | Greedy against random, and greedy against itself (is the game even by side?); a picture of a game's end |
 | `tactics.search [starts] [budgets...]` | The search player against greedy at a few budgets of simulations |
 | `tactics.code_games [games] [prefix] [work_plans] [replica] [minutes]` | The search player against itself on 15x15, saved as `{prefix}_lessons.npz` for code players to fit to |
-| `tactics.code_fit <prefix> <lessons...>` | A code player's constants fit to those games, scored on games kept out against simple baselines, and saved as `{prefix}_fit.json`, with what plays as `{prefix}_player.json` |
-| `tactics.code_ladder [weights] [starts] [size] [budgets] [replica] [rivals...]` | The code player against random, greedy or the search player, at equal simulations or equal time, and what a decision costs |
+| `tactics.code_fit <prefix> <lessons...>` | A code player's constants fit to those games, scored on games kept out against simple baselines, and saved as `{prefix}_fit.json`, with what plays as `{prefix}_player.json`: one weight overruled, and the value read 4 unit turns ahead |
+| `tactics.code_ladder [weights] [starts] [size] [budgets] [replica] [rivals...]` | The code player against random, greedy or the search player, at equal simulations or equal time, and what a decision and a unit's turn cost |
 | `tactics.rules [weights] [starts] [prefix] [simulations] [hold_rounds...]` | How games end, the engineer against an archer, rosters, and pure styles (greedy) or the roster it picks (code player), as tables and `{prefix}_rules.json`, to compare versions of the objective or players |
 | `tactics.fog [weights] [starts] [size] [simulations]` | What fog changes: greedy against itself in the open and under fog, a second knight's worth with and without its longer sight, and a code player's record both ways |
 | `tactics.watch [start] [prefix] [players...]` | One game, decision by decision, in a window or a GIF (random, greedy, sitter, search) |
@@ -132,6 +134,32 @@ wins is noise; the scouting lines also on 25x25 with 480 games).
 - **Greedy gets nothing from a scout:** fielding a second knight for two footsoldiers won 43% in
   the open, 43% under fog and 45% with knights seeing no further than the rest (25x25: 49%, 51% and
   48%). It reads greedy, which doesn't act on what it sees further off, not the knight.
+
+**A code player that looks ahead** (2026-11-11, under fog on 15x15: `tactics.code_games` for 400
+games of the search player, `tactics.code_fit`, then `tactics.code_ladder` on starts of their own,
+192 games against greedy and 96 against the search player at 50 simulations, which takes 268 ms a
+decision and 707 ms a unit's turn). The same constants, their value read as the position stands or
+after greedy has played 4 unit turns on:
+
+| Value read | Simulations | ms a decision | ms a unit's turn | v greedy | v search player |
+|---|---|---|---|---|---|
+| As the position stands | 128 | 97 | 316 | 102-90 | 37-59 |
+| 4 unit turns ahead | 32 | 119 | 363 | 118-74 | |
+| 4 unit turns ahead | 64 | 226 | 648 | 131-61 | 52-44 |
+| 4 unit turns ahead | 128 | 479 | 1428 | 135-57 | 44-52 |
+
+- **What a static value lacks is the next few turns.** A refit under fog, more features, a better
+  prior and deeper search had all left the code player near even with greedy; reading the value 4
+  unit turns ahead puts it level with the search player it was fit to (96-96 over the two budgets),
+  at that player's time.
+- **64 simulations are enough,** at about two thirds of a second a unit's turn; 128 double the time
+  for nothing measurable. With greedy deploying and on the starts players are scored on, 2 turns
+  ahead scored 102-90 against greedy at 64 simulations and 3 turns 131-61 at 128, against 138-54 and
+  137-55 for 4: set `lookahead` in the saved constants to try another.
+- **The fit stays as it was:** refitting the value to the positions ahead scored 133-59 against
+  137-55.
+- **It deploys as greedy does.** Deploying by its own search it scored the same against greedy and
+  71-121 against the search player over two sets of starts, against 92-100 with greedy's deployment.
 
 **The default rules** (2026-11-09, 25x25, starts of their own: a round-robin of six rosters, 480 games a
 match for greedy and 96 for the code player at 128 simulations, and two matches for the search player at
@@ -341,8 +369,8 @@ experiment can make any more. `zero_check` still plays saved full-size weights.
 | `events.py` | What a step did: `Placed`, `Moved`, `Built`, `Attacked`, `Captured`, `GameOver`, ... |
 | `players.py` | `RandomPlayer`, `GreedyPlayer`, `SitterPlayer` |
 | `search.py` | `SearchPlayer`, `Plan`, `Judgment`, `standing`, `material` |
-| `code_player.py` | `CodeEvaluator`, `HAND_PICKED`, `value_features`, `move_features` |
+| `code_player.py` | `CodeEvaluator`, `HAND_PICKED`, `value_features`, `move_features`, `look_ahead` |
 | `lessons.py` | `Lessons`, `lessons_of`, `positions_of`, `teach`: a search player's games kept to fit to |
-| `fit.py` | `fit`, `cases_of`, `FitScore`: a code player's constants fit to those games and scored |
+| `fit.py` | `fit`, `cases_of`, `FitScore`, `playing`: a code player's constants fit to those games and scored, and those that play |
 | `match.py` | `EVAL_SEED`, `small_rules`, `summarize`, `balance` |
 | `text.py`, `pictures.py` | Events and summaries as text; boards drawn as hexes |
