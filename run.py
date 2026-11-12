@@ -35,6 +35,7 @@ EXPERIMENTS = {
     "tactics.fog": "examples.games.tactics.experiments.fog",
     "tactics.zero_check": "examples.games.tactics.experiments.zero_check",
     "tactics.zero_scratch": "examples.games.tactics.experiments.zero_scratch",
+    "tactics.ppo": "examples.games.tactics.experiments.ppo",
     "tactics.watch": "examples.games.tactics.experiments.watch",
     "in_a_row.zero_scratch": "examples.games.in_a_row.experiments.zero_scratch",
     "in_a_row.zero_check": "examples.games.in_a_row.experiments.zero_check",

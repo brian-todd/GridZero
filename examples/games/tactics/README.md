@@ -110,6 +110,7 @@ hold: at 4, greedy players ended only 5% of games there by holding, at 3 a quart
 | `tactics.fog [weights] [starts] [size] [simulations]` | What fog changes: greedy against itself in the open and under fog, a second knight's worth with and without its longer sight, and a code player's record both ways |
 | `tactics.watch [start] [prefix] [players...]` | One game, decision by decision, in a window or a GIF (random, greedy, sitter, search) |
 | `tactics.zero_scratch <minutes> [prefix] ...` | AlphaZero on a 15x15 board, from scratch or after imitating greedy, in a time box, with endings, picks and work by generation |
+| `tactics.ppo <minutes> [prefix] [starts] [games] [taught] [entropy]` | A network warmed up by PPO self-play on 15x15 after imitating greedy, a quarter of its games against greedy, in a time box, scored alone against greedy as it goes |
 | `tactics.zero_check <weights> [starts] [simulations] [rivals...]` | The AlphaZero player on saved weights against the network alone, greedy or search |
 
 Run each as `uv run python run.py <command>`; `--help` prints an experiment's docstring.
@@ -160,6 +161,32 @@ after greedy has played 4 unit turns on:
   137-55.
 - **It deploys as greedy does.** Deploying by its own search it scored the same against greedy and
   71-121 against the search player over two sets of starts, against 92-100 with greedy's deployment.
+
+**A network warmed up by PPO** (2026-11-11, under fog on 15x15: `tactics.ppo 100 <prefix> 24 288`
+on an RTX 3080 and 24 processes; then its last network on the CPU, alone and under the AlphaZero
+search at 128 simulations, 192 games a match on the starts players are scored on, greedy deploying
+for it, where about 7 wins is noise. The search player has 50 simulations.)
+
+| Player | v the network alone | v greedy | v the search player |
+|---|---|---|---|
+| The network alone, its best action | | 124-68 | 81-111 |
+| The search on it, `c_scale` 0.03 | 125-67 | 123-69 | 94-98 |
+| The search on it, `c_scale` 0.1 | 118-74 | 131-61 | 106-86 |
+
+- **PPO plays many games:** 268 iterations of 288 games in 100 minutes, 77,000 games and 13 million
+  decisions. An iteration takes 22 seconds, 18 of them play: games here last 5 or 6 rounds.
+- **It learns to beat greedy, and then levels off.** After imitating 200 games of greedy the network
+  alone scored 9-39. In training's own games against greedy (actions drawn from its policy, deploying
+  by itself) it won 28% over the first 20 iterations, 47% over iterations 61-80, and 52-58% from
+  iteration 100 on.
+- **The search adds to it against planners, not against greedy.** It beats its own network two games
+  in three and brings it from 81-111 against the search player to level with it (200-184 over the
+  two weights); against greedy it scores what the network alone does.
+- **Its strength is its policy, not its value.** On 480 games of the network against itself, its
+  value says who wins no better than the code player's formula, fit to 400 games: in the last
+  quarter of a game their correlations with the result are 0.68 and 0.74, in the third 0.28 and 0.33,
+  and in the first half neither knows (under 0.1). A likely cause, not tested: PPO fits the value to
+  its own later values more than to results (`lam` 0.95), and its loss weighs the value at a half.
 
 **The default rules** (2026-11-09, 25x25, starts of their own: a round-robin of six rosters, 480 games a
 match for greedy and 96 for the code player at 128 simulations, and two matches for the search player at

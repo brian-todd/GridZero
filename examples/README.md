@@ -49,6 +49,9 @@ Each README dates its findings; these are the main ones.
   Under fog its static value falls behind (102-90 against greedy); read 4 unit turns of greedy
   play ahead it beats greedy 131-61 and is level with the search player, in about two thirds of a
   second a unit's turn.
+  A network warmed up by PPO self-play (2026-11-11, 77,000 games in 100 minutes) is the first on
+  these rules to beat greedy, 124-68 alone, and the AlphaZero search on it is level with the search
+  player; its value says who wins no better than the code player's formula.
 - **Self-play drifts into draws** in both two-player board games. A study on a small board
   against the exact solver is open.
 - **The simulations match their theory:** R*, the ideal free distribution, a trophic cascade,
