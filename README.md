@@ -40,6 +40,9 @@ obvious way to write a model, a game, a player and an experiment.
 - **Agents:** a uniform player; exact values of small games; Gumbel AlphaZero with chance
   nodes; MuZero, planning on a learned model from a player's view alone; imitation and PPO.
   Self-play runs in actor processes around one GPU inference server.
+- **Rules as arrays:** `batched` runs `core`'s operators and queries in JAX, for thousands of
+  states at once on a GPU. A game's rules written on it are held to the game ply by ply, given
+  its dice: Tactics' run at millions of steps a second.
 - **Pictures:** globes and maps of planets, flat maps of boards, a viewer that steps through a
   game in a window or saves a GIF, and training curves that refresh while a run trains.
 
@@ -57,7 +60,7 @@ only. The `game` protocols have had their last planned change; the rest may stil
 ## Getting started
 
 You need Python 3.15 (`uv python install 3.15`) and [uv](https://docs.astral.sh/uv/). Torch
-is a dependency; training needs an NVIDIA GPU (developed on an RTX 3080 with 10 GB), and the
+and JAX are dependencies; training needs an NVIDIA GPU (developed on an RTX 3080 with 10 GB), and the
 few tests that need one skip without it.
 
 ```bash
@@ -374,6 +377,7 @@ A few principles hold throughout:
 |---|---|
 | `game` | The `Game` and `Player` protocols, positions and actions, `play`, `series` in processes, records and `replay`, `tally`, `ladder` and `fairness`, and helpers that make a board fair (`symmetric`, `zones`, `joined`) |
 | `agents` | Players of any game: `UniformPlayer`, Gumbel AlphaZero search with chance nodes (`AlphaZeroPlayer`), its residual network and training loop on the GPU (`net`, `zero_train`), MuZero's search over a learned world model (`muzero`, `muzero_net`, `muzero_train`), imitation and PPO, and exact values of small games (`exact`). Only the networks and their training import Torch, and the package doesn't import them |
+| `batched` | `core` for many states at once, in JAX: `pull`, `push` and `gather` through any compiled neighborhood, moves on any space (`steps`, `reach`), sight and paths around a cell of a lattice from tables (`patch`, `sight`, `path_around`), dice, and the `ArrayGame` protocol of a game's rules as arrays. Integers equal `core`'s bit for bit and floats to float32's precision. Nothing else imports it |
 | `worlds` | A `Planet` (`generate_planet`) has continents, seas and a climate, with land, coasts and landmasses, on an icosphere or projected onto a lattice as its map. `generate_terrain` makes continents and seas for any 2-D lattice, such as a board for a game, and one seed gives the same continents at every resolution |
 | `render` | `globe` and `world_map` (Mollweide or equirectangular) picture a spherical mesh as images, and `flat_map` a 2-D lattice, such as a board or a planet's map, with `colorize`, `mix` and `over` for per-cell colors; `Browser` steps a figure through its frames, such as the positions of a game |
 

@@ -81,6 +81,16 @@ every round, engaged until the round ends, no fog), which the findings below dat
 found under. `small_rules()` gives quick games on a 15x15 board, with homes 3 rows deep and 3 rounds to
 hold: at 4, greedy players ended only 5% of games there by holding, at 3 a quarter.
 
+**The rules once more, as arrays** (`arrays.py`, `TacticsArrays`): the same rules as JAX functions of
+one position of fixed shape (`gridzero.batched`), which compile and run for thousands of games at
+once on a GPU, for self-play and searches at a scale the Python game can't reach. They play a
+position that hides nothing: a game without fog, or a side's belief. Units are slots by uid, and an
+action names a target near the acting unit: 133 local actions under the default rules on any board,
+where the game has 18 verbs times every tile. Stats, caps and bonuses are read from the same
+`Tactics` value, so a variant by parameters needs no new code; a new mechanic is written twice.
+`Tactics` stays the game: players, ladders and pages read it, and the tests hold the arrays to it
+ply by ply, given its dice. The arrays roll JAX's own dice, so they don't repeat a game of a seed.
+
 ## Players
 
 - `RandomPlayer`: a legal action at random, ending a unit's turn now and then.
@@ -122,6 +132,32 @@ self-play on the GPU.
 ## What we found
 
 Everything dated before 2026-11-10 was measured without fog (`fog=False`), which was the game then.
+
+**The rules as arrays** (2026-11-14, `arrays.py`; RTX 3080, JAX 0.12.0.1, 15x15).
+
+- **They are the game:** 4,000 games played by `Tactics` (random play that likes the rarer verbs,
+  and greedy for up to 95% of the decisions), from the first unit placed, under five sets of rules
+  (fog and none, 9x9, the earlier kinds, every flag turned): 952,548 plies, 44,957 attacks of which
+  2,460 deferred and 38 strikes of a brace, 22,842 swaps, 17,868 tiles built or broken, every way
+  to end. At each ply the legal actions, both sides' observations (bit for bit) and every field of
+  the next position, given the game's rolls: no difference. The same on the GPU for 24 games.
+- **Speed:** random play of whole games, deployment included, with the engine's own dice, in steps
+  a second (a step: the legal actions, one of them, the next position):
+
+  | Games at once | Rules | With the mover's observation |
+  |---|---|---|
+  | 1,024 | 2.2 million | 1.6 million |
+  | 4,096 | 6.7 million | 3.2 million |
+  | 16,384 | 8.2 million | 3.4 million |
+
+  The Python game takes about 250 us for a step and its legal actions on one core (119 and 129 us
+  under fog, `benchmarks/tactics.py` that day): 4,000 a second. A network of the size we train
+  answers 58,000 positions a second on the same GPU (102,000 in bf16), so the rules are no longer
+  what a search waits for. They compile in 3 to 5 seconds, and a position is 854 bytes.
+- **Routes cost whole numbers since that day** (`game.py`): a step 1024 and a watched tile 1 more,
+  where it was 1 and 0.001. Sums of such fractions depend on their order from 6 steps on, so among
+  routes with as many watched tiles the tie could go to rounding instead of the lowest cell. No
+  kind of the default rules moves that far, and no game kept as a test changed.
 
 **Fog** (2026-11-10, `tactics.fog` with the fit code player, 15x15, 96 games a line, where about 5
 wins is noise; the scouting lines also on 25x25 with 480 games).
@@ -410,4 +446,5 @@ experiment can make any more. `zero_check` still plays saved full-size weights.
 | `lessons.py` | `Lessons`, `lessons_of`, `positions_of`, `teach`: a search player's games kept to fit to |
 | `fit.py` | `fit`, `cases_of`, `FitScore`, `playing`: a code player's constants fit to those games and scored, and those that play |
 | `match.py` | `EVAL_SEED`, `small_rules`, `summarize`, `balance` |
+| `arrays.py` | `TacticsArrays`, `State`, `Dice`: the rules as JAX arrays, for batches of games on the GPU |
 | `text.py`, `pictures.py` | Events and summaries as text; boards drawn as hexes |

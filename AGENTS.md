@@ -18,7 +18,8 @@ comes second but is taken seriously.
 grids, neighborhoods, state, actions and the update loop. Beside it, `worlds` and `render`
 build planets, terrain and pictures from `core`. `game` holds the game layer beside `core`,
 `agents` what plays any game: the AlphaZero search, network and training, and MuZero's,
-and `examples/games/` four games on them: `tactics`, a two-player skirmish on hexes,
+`batched` (since 2026-11-14) `core`'s operations as JAX arrays, for rules that run for many
+states at once on the GPU, and `examples/games/` four games on them: `tactics`, a two-player skirmish on hexes,
 `in_a_row`, from tic-tac-toe to Connect Four, `voronoi`, stones placed on a planet by any
 number of players, and `colonies`, orders on a planet under fog of war, resolved by `core`'s
 loop. `game` plays any number of players on any space since
@@ -39,6 +40,10 @@ src/gridzero/agents/  players of any game: a uniform one, Observable, Revealable
                       muzero_train.py), imitation (imitate.py), PPO (ppo.py), exact values of
                       small games (exact.py); Torch only in the networks and the training
                       modules, which the package doesn't import
+src/gridzero/batched/ core for many states at once, in JAX: operators (operators.py), moves
+                      on any space and sight and paths around a cell of a lattice
+                      (queries.py), dice (dice.py), the ArrayGame protocol (games.py); nothing
+                      else in the package imports it
 src/gridzero/worlds/  Planet (planet.py), optional terrain (terrain.py), noise and relief
                       (noise.py)
 src/gridzero/         render.py (globes, maps, flat maps, cell polygons, text)
@@ -55,7 +60,8 @@ tests/                mirrors src/ and examples/. Shared fixtures and factories 
                       conftest.py, shared State classes in demo.py, the fake game and the checks
                       every game runs in game_demo.py, those every simulation's model runs in
                       model_demo.py, the test game of agents and check_learnable in
-                      agents_demo.py, and helpers the Tactics tests import in tactics_demo.py
+                      agents_demo.py, the check every game's array rules run in
+                      batched_demo.py, and helpers the Tactics tests import in tactics_demo.py
 benchmarks/           timing scripts, run as modules (python -m benchmarks.bench): bench.py times
                       both paths and the step target
 ```
@@ -80,9 +86,12 @@ taskset -c 4 uv run python -m benchmarks.bench   # timings, pinned to one perfor
 - Add dependencies only with `uv add` or `uv add --dev`, and **ask before adding one**.
 - We build on what is already locked: NumPy, SciPy, Numba, Matplotlib, pandas and
   scikit-learn. Torch and CUDA are available, and JAX (`jax[cuda13]`, added on 2026-11-13 for
-  rules and searches that run in batches on the GPU; nothing imports it yet). GPU work in `core`
-  is deferred; the networks of `agents` train on the GPU (RTX 3080, 10 GB: mind the memory) and
-  play on the CPU.
+  rules and searches that run in batches on the GPU): only `gridzero.batched` and a model's
+  array rules (`examples/games/tactics/arrays.py`) import it. GPU work in `core` is deferred;
+  the networks of `agents` train on the GPU (RTX 3080, 10 GB: mind the memory) and play on the
+  CPU. JAX takes most of the GPU's memory when it starts: set
+  `XLA_PYTHON_CLIENT_PREALLOCATE=false` where Torch shares the GPU. The tests run JAX on the
+  CPU (`JAX_PLATFORMS=cpu`, set in `tests/conftest.py`).
   JupyterLab is a dev tool, kept for when notebooks return.
 
 ## Code style
@@ -276,6 +285,22 @@ def pull(x: NDArray[np.float32], op: NeighborOperator) -> NDArray[np.float32]:
   displacement. **They don't work on the sphere.**
 - **GPU (Torch, RTX 3080) is deferred for `core`.** It is slower than the CPU on small grids.
   Networks are another matter: AlphaZero and MuZero train on it.
+- **Rules as arrays on the GPU** (JAX 0.12, RTX 3080, Tactics on 15x15, 2026-11-14): whole games
+  of random play, deployment included, step at 2.2 million a second for 1,024 games at once, 6.7
+  million for 4,096 and 8.2 million for 16,384 (a step: the legal mask, an action, the next
+  state), and at 1.6, 3.2 and 3.4 million with the mover's observation; the Python game does
+  4,000 on a core. A network answers 58,000 positions a second, so batches of rules are bound
+  by the network, not the rules.
+  - Under `vmap` every branch runs for every state: a step costs the sum of its branches, so
+    bound the work by small constants (the tiles a unit may enter, the archers that may fire),
+    never by the board, and keep a search of the board out of the rules (the reason an engineer's
+    build is a rule about seven tiles).
+  - Keep state per piece, not per cell, where a search stores states: Tactics' is 854 bytes.
+    Store narrow integers and widen them to int32 inside a step.
+  - Geometry is tables by lattice offset, filled once by `core` (`batched.patch`): the rules
+    only gather. The complete rules compile in 3 to 5 seconds.
+  - Converting a state to JAX arrays costs tens of microseconds a field on the GPU: keep
+    states as NumPy arrays (JAX takes them as they are), stack them, and move a batch once.
 
 ## Grids: facts worth knowing
 
@@ -371,6 +396,8 @@ def pull(x: NDArray[np.float32], op: NeighborOperator) -> NDArray[np.float32]:
   - **fast path equals reference:** test modules of operations with fast paths run every test
     on both paths, with `pytestmark = pytest.mark.usefixtures("each_impl")`. `test_kernels.py`
     compares the two paths' outcomes (results bit for bit, or the same error) on hard inputs,
+  - **arrays equal the reference:** a function of `gridzero.batched` against `core`'s, and a
+    game's array rules against the game with `check_array_game` (`tests/batched_demo.py`),
   - **determinism:** the same seed gives identical arrays, and different seeds give different
     arrays,
   - **bounds:** no negative amounts after resolution, and no flow into masked cells.
@@ -513,6 +540,26 @@ The rules below are the ones to keep in mind while writing code.
   the same error. NaN payloads and NumPy's warnings are exempt. Random draws come only from
   NumPy, kernels are serial, and `implementation(...)` is the one switch, with no keyword per
   call.
+- **Rules as arrays are a second engine, not a third implementation** (`gridzero.batched`,
+  2026-11-14). `core`, and a model written on it, stay the reference: players, ladders,
+  experiments' scores, pages and tests read them. An array version is written per model, with
+  `jax.numpy`, where batches pay: self-play, searches, sweeps over seeds and parameters.
+  - **Every function takes one state.** A batch is that function under `jax.vmap`, compiled
+    by `jax.jit`. Shapes never depend on the state.
+  - **What equal means:** integers and booleans are `core`'s bit for bit, on the GPU too;
+    floats to float32's precision. A batched function is tested against `core`'s function of
+    the same name.
+  - **Its own dice:** draws come from JAX's generators (`batched.root`, `stream`, `d`), named
+    by step as the loop names its streams. An array model is the same model with other dice:
+    equal to its reference given equal dice, not per seed. A step is `apply(state, action,
+    dice)`, a pure function of its dice, and `step` rolls them.
+  - **A game's array rules are an `ArrayGame`,** a class beside the game (`arrays.py`, built
+    from the game's own value, so parameters stay in one place): a `State` of arrays in fixed
+    shapes, local actions small enough to keep per node of a search, converters both ways, and
+    the game's dice read back from the positions it made. Its tests run `check_array_game`,
+    which holds it to the game ply by ply, and whole games of every rule variant.
+  - No new way to describe anything: spaces, neighborhoods and fields keep their meaning.
+    Tables come from `core`'s public functions, never from a second copy of the geometry.
 - **Tilings are data:** adding a tiling means a new `_Tiling` record in `core/lattice.py`, not a
   new class.
 - **Simulations and games are data:** a frozen dataclass of parameters builds the state, the

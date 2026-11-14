@@ -65,9 +65,11 @@ from .events import (
 from .rules import DEFAULT_CAPS, DEFAULT_UNITS, UnitStats, hit_chance, hits, roll_needed
 from .state import Hold, TacticsPosition, TacticsState, Verb
 
-_WATCHED = 1e-3
-"""What entering a watched tile adds to a route's cost: enough to steer around it among routes of
-the fewest steps, too little to make a route longer (moves are at most 126 steps)."""
+_STEP = 1024.0
+"""What a step costs a route, where entering a watched tile costs 1 more: enough to steer around
+it among routes of the fewest steps, too little to make a route longer (moves are at most 126
+steps). Whole numbers, so that routes with as many watched tiles cost the same in whatever order
+they come, and the tie goes to the lowest cell (`core.path`), not to rounding."""
 
 
 class Odds(NamedTuple):
@@ -975,8 +977,8 @@ class Tactics:
             kind, team, watch = believed.units.kind, believed.units.team, believed.units.watch
         enemy = (kind >= 0) & (team != work.team[a]) & (watch >= 0)
         if enemy.any():
-            cost = np.ones(space.n_cells)
-            cost[watch[enemy]] += _WATCHED
+            cost = np.full(space.n_cells, _STEP)
+            cost[watch[enemy]] += 1.0
         route = path(space, a, goal, cost=cost, blocked=~state.passable | (kind >= 0))
         if believed is not None:
             met = (work.kind[route[1:]] >= 0).nonzero()[0]
