@@ -398,9 +398,9 @@ def test_a_search_may_play_a_whole_game_of_engineers():
 
 
 def test_a_plan_with_nothing_left_to_do_ends_with_the_work_greedy_would_do(make_battle, at):
-    # As in greedy's own test: closing the near gap makes the enemy walk around.
-    walls = [(4, r) for r in range(9) if r not in (4, 0)]
-    pieces = [piece(3, 4, ENGINEER, 0), piece(8, 6, FOOT, 1)]
+    # As in greedy's own test: closing the near tile of the gap makes the enemy's walk longer.
+    walls = [(4, r) for r in range(9) if r not in (4, 5)]
+    pieces = [piece(3, 4, ENGINEER, 0), piece(8, 2, FOOT, 1)]
     position = make_battle(pieces, game=WORKS, walls=walls, point=(2, 4), hold=Hold(0, 1))
     legal = WORKS.legal(position)
     player = SearchPlayer(greedy=GreedyPlayer(risk=0.0))

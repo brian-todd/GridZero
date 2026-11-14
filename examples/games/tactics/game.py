@@ -42,7 +42,7 @@ from gridzero.core import (
     snap,
 )
 from gridzero.core._arrays import check_cell, read_only
-from gridzero.game import Action, check_action, joined
+from gridzero.game import Action, check_action
 
 from . import objective
 from .board import board_space, homes, make_board, rings
@@ -1422,25 +1422,23 @@ class _Turn:
     def buildable(self) -> NDArray[np.bool_]:
         """The tiles the acting unit may build on: shape (n_cells,), bool.
 
-        Adjacent, neither a wall, a unit nor the point. Open tiles also must not cut any living
-        unit or the point off from the rest, counting walls and rubble as blocked and ignoring
-        units. Rubble to wall blocks no more walking, so it needs no check.
+        Adjacent, neither a wall, a unit nor the point. An open tile also must not lie between
+        two arcs of open tiles: going around it, its open neighbors (walls, rubble and the
+        board's edge aside, units ignored) must come in one run. Closing such a tile leaves its
+        neighbors joined by that run, so no build ever cuts a unit or the point off from the
+        rest, and the rule reads only the seven tiles. It refuses some builds that would cut
+        nothing off: a tile between two arcs that are joined the long way round. Rubble to wall
+        blocks no more walking, so it needs no check.
         """
-        state, space = self.state, self.state.space
-        near = _near(space, self.active, 1.0)
+        state = self.state
+        near = _near(state.space, self.active, 1.0)
         near = near[~(state.wall[near] | state.occupied[near] | state.point[near])]
         mask = self.none.copy()
         mask[near] = True
         tiles = near[state.passable[near]]
-        # Closing a tile whose open neighbors make one arc around it leaves them joined by that
-        # arc, so only a tile between two arcs can cut anything off. Most tiles need no search.
         around = np.append(state.passable, False)[rings(self.game.shape)[tiles]]
         arcs = np.count_nonzero(around & ~around[:, [1, 2, 3, 4, 5, 0]], axis=1)
-        anchors = (state.occupied | state.point).nonzero()[0]
-        for tile in tiles[arcs > 1]:
-            open_ = state.passable.copy()
-            open_[tile] = False
-            mask[tile] = joined(space, open_, anchors)
+        mask[tiles[arcs > 1]] = False
         return mask
 
     def movement_left(self) -> int:

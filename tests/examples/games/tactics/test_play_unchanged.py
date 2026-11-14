@@ -16,7 +16,8 @@ from tactics_demo import WORKS, play_random
 EARLIER = dataclasses.replace(
     earlier_rules(), shape=(9, 9), home_depth=4, team_size=5, max_rounds=12, capture_by=8
 )
-"""`WORKS` under the earlier rules, which must still play as the defaults did before them."""
+"""`WORKS` under the earlier rules, which must still play as the defaults did before them, but for
+rules that are not parameters: where an engineer may build is the same under both."""
 
 
 def add(digest, position, action):
@@ -57,8 +58,8 @@ def by_chance(games, game=WORKS):
 @pytest.mark.parametrize(
     ("play", "pinned"),
     [
-        (lambda: by_chance(4), "1417a127fc067015"),
-        (lambda: by_player(GreedyPlayer(), 4), "25ca91e1d523ba6b"),
+        (lambda: by_chance(4), "beba5d8537232277"),
+        (lambda: by_player(GreedyPlayer(), 4), "e156a79a44987b1e"),
         (
             lambda: by_player(SearchPlayer(simulations=8, rollout_turns=4), 1, 80),
             "f43e3effe48b5c84",
@@ -73,8 +74,8 @@ def test_games_are_played_as_they_were(play, pinned):
 @pytest.mark.parametrize(
     ("play", "pinned"),
     [
-        (lambda: by_chance(4, EARLIER), "e370826d44966fc3"),
-        (lambda: by_player(GreedyPlayer(), 4, game=EARLIER), "2213b714f4b1fa8c"),
+        (lambda: by_chance(4, EARLIER), "fd5f47cec27571e3"),
+        (lambda: by_player(GreedyPlayer(), 4, game=EARLIER), "d2a340fbc308cecd"),
         (
             lambda: by_player(SearchPlayer(simulations=8, rollout_turns=4), 1, 80, EARLIER),
             "a96d6e363ad8c1f3",

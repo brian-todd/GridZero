@@ -485,7 +485,7 @@ def test_looking_ahead_is_where_greedy_against_itself_ends_that_many_turns():
 
 
 def test_a_value_that_looks_ahead_is_the_value_of_the_position_ahead_and_the_prior_stays():
-    positions = battles(5)
+    positions = battles(9)  # a game with positions that end within three turns
     legal = [GAME.legal(p) for p in positions]
     ahead = [look_ahead(GAME, p, 3) for p in positions]
     assert {p.over for p in ahead} == {False, True}  # a batch of both: some end on the way

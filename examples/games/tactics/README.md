@@ -37,8 +37,10 @@ turn to face any direction, and end its turn.
   arrow opens the wall for a knight's charge.
 - **Terrain:** a wall blocks movement and sight, and rubble blocks movement only. In place of its
   attack, an engineer may raise an adjacent tile a step (open, rubble, wall) or lower it a step.
-  Not on a unit or the point, and a build may not cut any living unit or the point off from the
-  rest, counting walls and rubble as blocked and ignoring units.
+  Not on a unit or the point, and not on an open tile between two arcs of open tiles: going
+  around it, its open neighbors must come in one run (walls, rubble and the board's edge aside,
+  units ignored). So no build can cut a unit or the point off from the rest, and a gap in a
+  line of walls can't be closed even where there is another way around.
 
 **The point.** At the end of each round, a unit standing on the center tile takes it for its side,
 which keeps it until an enemy stands there at a round's end. So walking through captures nothing,
@@ -351,6 +353,14 @@ as greedy does in these rosters.
   gives up about 10 to 20 points of 100 by fielding one knight. Knights nearly always die, and pay for it: 5 damage
   each a game, against 3 to 4 for others.
 - **The engineer is about an archer,** perhaps a little less, even played by those who build.
+- **Where an engineer may build is a rule about seven tiles since 2026-11-14:** an open tile with
+  one run of open tiles around it. Before, any open tile whose closing cut no unit or the point
+  off could be closed, which took a search of the board; the new rule also refuses a tile between
+  two arcs that are joined the long way round, so a gap can be narrowed to one tile but never
+  closed. Measured under the old rule that day, on 15x15: the tiles the new rule takes away were
+  0.6% of greedy's options to build on open tiles (384 games) and 2.2-2.4% of the search player's
+  and the code player's (144 games), and of the 257 builds those two played on open tiles, none
+  was one. Results above are from before the change.
 - **Its own pick:** free to choose, the code player always fields 5 footsoldiers, 2 knights and a captain, no archers
   or engineers, so no shots or tiles in self-play, and deploys them itself in the 99-93 above. This probably follows
   its value's weight on hit points, not tested, and does no harm, perhaps through the second knight.

@@ -146,7 +146,8 @@ def test_no_work_at_all_on_a_point_a_hand_made_board_blocked(make_battle, at):
 
 
 # Sealing. A line of walls at q = 4 with one gap at (4, 4) cuts the board in two: every step from
-# q = 3 to q = 5 crosses q = 4, and (4, 4) is the only way across.
+# q = 3 to q = 5 crosses q = 4, and (4, 4) is the only way across. Around the gap the open tiles
+# come in two arcs, one on each side of the line, and a tile between two arcs may not be closed.
 LINE = [(4, r) for r in range(9) if r != 4]
 
 
@@ -159,11 +160,12 @@ def test_a_build_that_would_cut_an_enemy_off_is_illegal(make_battle, at):
         take(position, Verb.BUILD, at(4, 4))
 
 
-def test_a_build_that_would_cut_the_point_off_is_illegal(make_battle, at):
+@pytest.mark.parametrize("point", [None, (6, 6)], ids=["nothing beyond", "the point beyond"])
+def test_a_gap_may_not_be_closed_whatever_lies_beyond_it(make_battle, at, point):
+    # The rule reads the tiles around the gap only, not what closing it would cut off.
     pieces = [piece(3, 4, ENGINEER, 0), piece(1, 1, FOOT, 1)]
-    position = make_battle(pieces, game=WORKS, walls=LINE)
-    assert WORKS.legal(position)[Verb.BUILD, at(4, 4)]  # nothing beyond it
-    position = make_battle(pieces, game=WORKS, walls=LINE, point=(6, 6))
+    extra = {} if point is None else {"point": point}
+    position = make_battle(pieces, game=WORKS, walls=LINE, **extra)
     assert not WORKS.legal(position)[Verb.BUILD, at(4, 4)]
 
 
@@ -175,10 +177,34 @@ def test_a_build_that_would_cut_off_a_pocket_one_tile_wide_is_illegal(make_battl
     assert not WORKS.legal(position)[Verb.BUILD, at(4, 4)]
 
 
-def test_a_build_between_two_arcs_is_legal_when_there_is_another_way_around(make_battle, at):
-    # Walls on two sides of the tile split its neighbors in two arcs, joined the long way round.
+def test_a_build_between_two_arcs_is_illegal_even_with_another_way_around(make_battle, at):
+    # Walls on two sides of the tile split its neighbors in two arcs, joined the long way round:
+    # closing it would cut nothing off, and the rule refuses it all the same.
     pieces = [piece(3, 4, ENGINEER, 0), piece(6, 4, FOOT, 1)]
     position = make_battle(pieces, game=WORKS, walls=[(4, 3), (4, 5)])
+    assert not WORKS.legal(position)[Verb.BUILD, at(4, 4)]
+
+
+@pytest.mark.parametrize("blocks", ["walls", "rubble"])
+def test_rubble_splits_the_tiles_around_a_build_as_walls_do(make_battle, at, blocks):
+    pieces = [piece(3, 4, ENGINEER, 0), piece(6, 4, FOOT, 1)]
+    position = make_battle(pieces, game=WORKS, **{blocks: [(4, 3), (4, 5)]})
+    assert not WORKS.legal(position)[Verb.BUILD, at(4, 4)]
+
+
+def test_the_boards_edge_splits_the_tiles_around_a_build(make_battle, at):
+    # (0, 4) has four neighbors on the board, in one run; a wall on (1, 3) splits them in two.
+    pieces = [piece(1, 4, ENGINEER, 0), piece(6, 4, FOOT, 1)]
+    assert WORKS.legal(make_battle(pieces, game=WORKS))[Verb.BUILD, at(0, 4)]
+    position = make_battle(pieces, game=WORKS, walls=[(1, 3)])
+    assert not WORKS.legal(position)[Verb.BUILD, at(0, 4)]
+
+
+def test_a_tile_with_open_tiles_all_around_or_one_run_of_them_may_be_closed(make_battle, at):
+    pieces = [piece(3, 4, ENGINEER, 0), piece(6, 4, FOOT, 1)]
+    assert WORKS.legal(make_battle(pieces, game=WORKS))[Verb.BUILD, at(4, 4)]
+    # Three walls in a row around (4, 4) leave its other neighbors in one run.
+    position = make_battle(pieces, game=WORKS, walls=[(5, 4), (4, 5), (5, 3)])
     assert WORKS.legal(position)[Verb.BUILD, at(4, 4)]
 
 
@@ -231,21 +257,54 @@ def test_new_rubble_blocks_the_way_for_the_next_move(make_battle, at):
 # Whole games.
 
 
+def runs_of_open_tiles(state, tile):
+    """Count the runs of open tiles around a tile, from the lattice itself.
+
+    The open neighbors of the tile, joined where two of them touch: the pieces they fall into.
+    A tile with all six open counts one run (the ring), as does one with none.
+    """
+    space = state.space
+    around = np.flatnonzero((hops(space, np.arange(state.n_cells), tile) == 1) & state.passable)
+    piece_of = list(range(around.size))
+    for i, a in enumerate(around):
+        for j, b in enumerate(around[:i]):
+            if hops(space, np.array([a]), b)[0] == 1:
+                piece_of = [piece_of[i] if p == piece_of[j] else p for p in piece_of]
+    return max(1, len(set(piece_of)))
+
+
+def test_buildable_open_tiles_are_exactly_those_with_one_run_of_open_tiles_around():
+    checked = refused = 0
+    for seed in range(6):
+        rng = np.random.default_rng(seed)
+        for position, _ in play_random(WORKS, seed, rng, end_share=0.02):
+            if position.deploying or position.over:
+                continue
+            state = position.state
+            active = WORKS.active(position)
+            if not WORKS.units[state.units.kind[active]].builds or state.units.attacked[active]:
+                continue
+            legal = WORKS.legal(position)[Verb.BUILD]
+            around = hops(state.space, np.arange(state.n_cells), active) == 1
+            for tile in np.flatnonzero(around & state.passable & ~state.occupied & ~state.point):
+                assert legal[tile] == (runs_of_open_tiles(state, tile) == 1)
+                checked += 1
+                refused += not legal[tile]
+    assert checked > 100
+    assert refused > 0
+
+
 @pytest.mark.parametrize("seed", range(3))
-def test_buildable_tiles_are_exactly_those_a_search_of_the_whole_board_allows(seed):
+def test_no_legal_build_cuts_a_unit_or_the_point_off(seed):
     rng = np.random.default_rng(seed)
     checked = 0
     for position, _ in play_random(WORKS, seed, rng, end_share=0.02):
-        legal = WORKS.legal(position)[Verb.BUILD]
-        if not legal.any():
-            continue
         state = position.state
         anchors = np.flatnonzero(state.occupied | state.point)
-        around = hops(state.space, np.arange(state.n_cells), WORKS.active(position)) == 1
-        for tile in np.flatnonzero(around & state.passable & ~state.occupied & ~state.point):
+        for tile in np.flatnonzero(WORKS.legal(position)[Verb.BUILD] & state.passable):
             open_ = state.passable.copy()
             open_[tile] = False
-            assert legal[tile] == joined(state.space, open_, anchors)
+            assert joined(state.space, open_, anchors)
             checked += 1
     assert checked > 0
 
@@ -313,15 +372,28 @@ def test_work_is_counted_and_told(make_battle, at):
 # Greedy's work.
 
 
-def test_greedy_blocks_the_only_short_way_to_the_point_for_the_enemy(make_battle, at):
-    # A wall with one gap at (4, 4) and another far away, so that a block doesn't seal: the
-    # engineer stands by the near gap, and the enemy would have to walk around.
-    walls = [(4, r) for r in range(9) if r not in (4, 0)]
-    pieces = [piece(3, 4, ENGINEER, 0), piece(8, 6, FOOT, 1)]  # out of its reach, even moving
+def test_greedy_blocks_the_shorter_way_to_the_point_for_the_enemy(make_battle, at):
+    # A wall with a gap two tiles wide, at (4, 4) and (4, 5). The enemy's shortest walk to the
+    # point crosses (4, 4); through (4, 5) it is a step longer. The engineer, which has moved
+    # already and has no one in reach, closes the near tile: one run of open tiles lies around it.
+    walls = [(4, r) for r in range(9) if r not in (4, 5)]
+    pieces = [piece(3, 4, ENGINEER, 0, moved=2), piece(8, 2, FOOT, 1)]
     position = make_battle(pieces, game=WORKS, walls=walls, point=(2, 4), hold=Hold(0, 1))
     legal = WORKS.legal(position)
     action = GreedyPlayer(risk=0.0)(WORKS, 0, position, legal, np.random.default_rng(0))
     assert action == Action(Verb.BUILD, at(4, 4))
+
+
+def test_greedy_cannot_close_the_last_tile_of_a_gap(make_battle, at):
+    # The same wall with one gap at (4, 4) and another far away: closing the near one would make
+    # the enemy walk around and cut nothing off, but a tile between two arcs may not be closed.
+    walls = [(4, r) for r in range(9) if r not in (4, 0)]
+    pieces = [piece(3, 4, ENGINEER, 0, moved=2), piece(8, 6, FOOT, 1)]
+    position = make_battle(pieces, game=WORKS, walls=walls, point=(2, 4), hold=Hold(0, 1))
+    legal = WORKS.legal(position)
+    assert not legal[Verb.BUILD, at(4, 4)]
+    action = GreedyPlayer(risk=0.0)(WORKS, 0, position, legal, np.random.default_rng(0))
+    assert action.verb != Verb.BUILD
 
 
 def test_greedy_breaks_a_way_for_friends_to_the_point(make_battle, at):
