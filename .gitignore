@@ -20,7 +20,7 @@ wheels/
 # Editor settings
 .zed/
 
-# Local settings, such as compose.yaml's LLM_* variables: may hold tokens
+# Local settings: may hold tokens
 .env
 .env.*
 
@@ -32,6 +32,9 @@ runs/
 /*.png
 /*.gif
 /*.jsonl
+/*.json
+/*.npz
+/*.html
 
 # Internal development documents: kept locally, never published
 /docs/

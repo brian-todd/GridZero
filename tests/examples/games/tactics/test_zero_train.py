@@ -7,8 +7,13 @@ import pytest
 import torch
 
 from examples.games.tactics import (
+    Captured,
+    GameOver,
     Tactics,
+    TacticsPosition,
+    small_rules,
 )
+from examples.games.tactics.experiments.zero_scratch import endings
 from gridzero.agents.net import NetEvaluator, PolicyNet, as_input
 from gridzero.agents.zero import AlphaZeroPlayer, self_play
 from gridzero.agents.zero_train import (
@@ -27,9 +32,6 @@ from gridzero.agents.zero_train import (
     train,
 )
 from tactics_demo import TINY
-
-DECIDED = dataclasses.replace(TINY, decide_at_cap=True)
-"""TINY with a winner at the round cap, so that outcomes are not all 0."""
 
 FIELDS = ("obs", "legal", "policy", "start", "outcome", "game", "ply")
 
@@ -91,7 +93,7 @@ def quick_settings(**changes):
 
 
 def test_losses_are_the_cross_entropy_of_the_policy_and_the_squared_error_of_the_value():
-    experience, _ = self_play(DECIDED, player(), [16], keep=0.5)
+    experience, _ = self_play(TINY, player(), [16], keep=0.5)
     assert set(experience.outcome.tolist()) == {1.0, -1.0}
     net = player().evaluator.net
     policy, value = losses(net, experience, torch.device("cpu"))
@@ -124,19 +126,20 @@ def test_a_generation_plays_keeps_and_trains():
 
 
 def test_training_lowers_the_loss_on_the_buffer():
-    experience, _ = self_play(DECIDED, player(), [17, 18], keep=1.0)
+    experience, _ = self_play(TINY, player(), [17, 18], keep=1.0)
     torch.manual_seed(1)
-    net = PolicyNet(DECIDED, channels=8, blocks=2)
+    net = PolicyNet(TINY, channels=8, blocks=2)
     cpu = torch.device("cpu")
-    settings = quick_settings(steps=100, lr=3e-3, batch_size=32)
+    settings = quick_settings(steps=400, lr=3e-3, batch_size=32)
     optimizer = torch.optim.AdamW(net.parameters(), lr=settings.lr)
     entropy = _entropy(experience)
     policy, value = _mean_losses(net, experience, 64, cpu)
     _learn(net, optimizer, experience, settings, cpu, np.random.default_rng(0))
     trained_policy, trained_value = _mean_losses(net, experience, 64, cpu)
-    # A tiny network fits noisy search targets slowly (0.69 to 0.63 above the entropy) and
-    # outcomes fast (1.07 to 0.10); a wrong sign or misaligned target would raise them.
-    assert trained_policy - entropy < 0.95 * (policy - entropy)
+    # A tiny network fits noisy search targets slowly (over seeds, the gap above the entropy falls
+    # to 0.54-0.71 of what it was) and outcomes fast; a wrong sign or misaligned target would raise
+    # them.
+    assert trained_policy - entropy < 0.85 * (policy - entropy)
     assert trained_value < 0.5 * value
 
 
@@ -159,14 +162,14 @@ def test_each_generation_plays_new_boards_with_noise_and_scores_its_own_decision
     # Without training steps the network stays as it is, so self-play with it replays each
     # generation's games.
     torch.manual_seed(0)
-    net = PolicyNet(DECIDED, channels=8, blocks=2)
+    net = PolicyNet(TINY, channels=8, blocks=2)
     settings = quick_settings(keep=0.5, steps=0)
-    first, second = train(net, DECIDED, settings, generations=2, seed=20)
+    first, second = train(net, TINY, settings, generations=2, seed=20)
     assert second.buffer == first.kept + second.kept
     assert np.isnan(first.policy_loss)
     zero = AlphaZeroPlayer(NetEvaluator(net), simulations=2, considered=2, noise=True)
     for generation, seed in ((first, 20), (second, 21)):
-        experience, [played] = self_play(DECIDED, zero, [seed], keep=0.5)
+        experience, [played] = self_play(TINY, zero, [seed], keep=0.5)
         assert (generation.kept, generation.searched) == (len(experience), played.searched)
         expected = _mean_losses(net, experience, settings.batch_size, torch.device("cpu"))
         fresh = (generation.fresh_policy_loss, generation.fresh_value_loss)
@@ -271,3 +274,31 @@ def test_the_server_judges_on_the_gpu():
     assert all(p.plies > 0 for p in played)
     assert len(experience) == sum(p.searched for p in played)
     assert costs.peak_mib > 0
+
+
+def test_the_rules_zero_scratch_trains_on_make_a_game_and_a_network():
+    game = small_rules()
+    assert game.start(0).deploying
+    assert PolicyNet(game, channels=8, blocks=1) is not None
+
+
+def test_endings_count_reasons_seats_and_flips_in_the_last_round():
+    state = TINY.start(0).state
+
+    def final(winner, *events):
+        return TacticsPosition(state, 0, over=True, winner=winner, events=events)
+
+    report = endings(
+        [
+            final(0, GameOver(0, "killed")),
+            final(1, Captured(1, 4, True), GameOver(1, "held")),  # a flip, but not at the cap
+            final(1, Captured(1, 16, True), GameOver(1, "cap")),
+            final(0, GameOver(0, "cap")),
+        ]
+    )
+    assert report == {
+        "reasons": {"killed": 1, "held": 1, "cap": 2},
+        "last_round_flips": 1,
+        "team_0": 2,
+        "games": 4,
+    }

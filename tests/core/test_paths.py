@@ -433,3 +433,17 @@ def test_bad_hops_raise(not_cell_ids):
         hops(icosphere(1), 0, 1)  # ty: ignore[invalid-argument-type]
     with pytest.raises(ValueError, match="adjacency kind"):
         hops(space, 0, 1, kind=2)
+
+
+@pytest.mark.parametrize("shape", [(9, 9), (15, 15)])
+def test_a_path_with_unit_costs_is_the_path_with_no_costs(shape):
+    # Moves leave out the costs when nothing is watched, so the two must never pick different ways.
+    space = LatticeSpace(shape, tiling="hex", periodic=False)
+    rng = np.random.default_rng(0)
+    for _ in range(200):
+        blocked = rng.random(space.n_cells) < rng.choice([0.05, 0.2, 0.35])
+        a, b = rng.choice(space.n_cells, 2, replace=False)
+        blocked[[a, b]] = False
+        plain = path(space, int(a), int(b), blocked=blocked)
+        costed = path(space, int(a), int(b), cost=np.ones(space.n_cells), blocked=blocked)
+        np.testing.assert_array_equal(plain, costed)

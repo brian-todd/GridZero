@@ -12,6 +12,7 @@ from examples.games.tactics import (
     board_space,
     homes,
 )
+from examples.games.tactics.state import NOBODY
 from gridzero.core import Field
 from tactics_demo import SMALL
 
@@ -33,13 +34,18 @@ def at() -> CellFinder:
 def make_battle() -> BattleFactory:
     """Return a factory of positions in battle, built by hand.
 
-    ``make_battle(pieces, game=SMALL, walls=(), rubble=(), seed=0, round=1)`` puts the pieces
-    on an open board with the given walls and rubble, as axial ``(q, r)`` pairs. Units take
-    turns in the order listed (their initiative), unless a piece sets ``initiative``. Each
-    gets its kind's full hp unless it sets ``hp``.
+    ``make_battle(pieces, game=SMALL, walls=(), rubble=(), seed=0, round=1, point=None,
+    hold=NOBODY)`` puts the pieces on an open board with the given walls and rubble, as axial
+    ``(q, r)`` pairs, with no point unless ``point`` names its tile, so that tests of other
+    mechanics may stand anywhere. Units take turns in the order listed (their initiative), unless
+    a piece sets ``initiative``. Each gets its kind's full hp unless it sets ``hp``. Under fog
+    each was last seen where it stands, as it is, in this round, unless it sets ``spotted`` and
+    the like.
     """
 
-    def factory(pieces, game=SMALL, walls=(), rubble=(), seed=0, round=1) -> TacticsPosition:
+    def factory(
+        pieces, game=SMALL, walls=(), rubble=(), seed=0, round=1, point=None, hold=NOBODY
+    ) -> TacticsPosition:
         space = board_space(game.shape)
         n = space.n_cells
         wall = np.zeros(n, dtype=bool)
@@ -48,10 +54,14 @@ def make_battle() -> BattleFactory:
             wall[space.ravel([q, r])] = True
         for q, r in rubble:
             rough[space.ravel([q, r])] = True
+        on_point = np.zeros(n, dtype=bool)
+        if point is not None:
+            on_point[space.ravel(list(point))] = True
         values: dict[Field[Any], Any] = {
             TacticsState.wall: wall,
             TacticsState.rubble: rough,
             TacticsState.home: homes(space, game.home_depth),
+            TacticsState.point: on_point,
         }
         arrays = {
             "uid": np.full(n, -1),
@@ -74,12 +84,24 @@ def make_battle() -> BattleFactory:
                     continue
                 if name not in extras:
                     extras[name] = np.zeros(n, dtype=type(value))
-                    if name == "watch":
+                    if name in ("watch", "spotted"):
                         extras[name][:] = -1
                 extras[name][c] = value
+            if game.fog:  # as a battle starts: last seen where it stands, unless the piece says
+                seen = {
+                    "spotted": c,
+                    "spotted_hp": arrays["hp"][c],
+                    "spotted_facing": p.extra.get("facing", 0),
+                    "spotted_round": round,
+                }
+                for name, value in seen.items():
+                    if name not in p.extra:
+                        if name not in extras:
+                            extras[name] = np.full(n, -1 if name == "spotted" else 0)
+                        extras[name][c] = value
         arrays.update(extras)
         for name, value in arrays.items():
             values[getattr(TacticsState.units, name)] = value
-        return TacticsPosition(TacticsState(space, values), seed, round=round)
+        return TacticsPosition(TacticsState(space, values), seed, round=round, hold=hold)
 
     return factory

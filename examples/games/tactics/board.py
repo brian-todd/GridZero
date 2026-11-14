@@ -1,9 +1,9 @@
-"""Boards for Tactics: a hex rhombus with walls and rubble, symmetric for both sides.
+"""Boards for Tactics: a hex rhombus with walls, rubble and a point, symmetric for both sides.
 
 The rhombus of an axial hex lattice is symmetric under a half turn about its center
 (`core.LatticeSpace.opposite`), which swaps the two corners of its short diagonal. Each team's
 home is one of those corners, so a board made symmetric under that half turn favors neither
-side.
+side. The point is the one tile that half turn leaves in place, so boards have odd lengths.
 """
 
 import functools
@@ -22,7 +22,36 @@ WAVENUMBERS = (2 * np.pi / 12, 2 * np.pi / 4)
 """Wavenumbers of the noise obstacles come from: wavelengths of 4 to 12 tiles, so cover is spread
 in pieces of a few tiles over the whole board, rather than in a few large masses."""
 _ATTEMPTS = 100
-"""Boards drawn before giving up on one whose homes are joined by open tiles."""
+"""Boards drawn before giving up on one whose homes and point are joined by open tiles."""
+
+
+_AROUND = ((1, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1))
+"""The axial offsets of a hex's neighbors, in order around it."""
+
+
+@functools.cache
+def rings(shape: tuple[int, int]) -> NDArray[np.int64]:
+    """Return each tile's neighbors in order around it, shared by every board of that shape.
+
+    Parameters
+    ----------
+    shape : tuple of int
+        ``(Q, R)``: the lengths of the two axial axes.
+
+    Returns
+    -------
+    ndarray of int64, shape (n_cells, 6)
+        The cell ids around each tile, ``n_cells`` where the board ends. Read-only.
+    """
+    q, r = shape
+    table = np.empty((q * r, 6), dtype=np.int64)
+    at_q, at_r = np.divmod(np.arange(q * r), r)
+    for slot, (dq, dr) in enumerate(_AROUND):
+        to_q, to_r = at_q + dq, at_r + dr
+        inside = (to_q >= 0) & (to_q < q) & (to_r >= 0) & (to_r < r)
+        table[:, slot] = np.where(inside, to_q * r + to_r, q * r)
+    table.setflags(write=False)
+    return table
 
 
 @functools.cache
@@ -41,6 +70,30 @@ def board_space(shape: tuple[int, int]) -> LatticeSpace:
         positions of different games share their caches.
     """
     return LatticeSpace(shape, tiling="hex", periodic=False)
+
+
+def center_cell(space: LatticeSpace) -> int:
+    """Return the cell the half turn leaves in place, where the point is.
+
+    Parameters
+    ----------
+    space : LatticeSpace
+        A 2-D lattice of odd shape ``(Q, R)``.
+
+    Returns
+    -------
+    int
+        The cell ``((Q - 1) / 2, (R - 1) / 2)``.
+
+    Raises
+    ------
+    ValueError
+        If an axis has an even length: the half turn then leaves no cell in place.
+    """
+    q, r = space.shape[0], space.shape[1]
+    if q % 2 == 0 or r % 2 == 0:
+        raise ValueError(f"a board needs odd lengths to have a center, got {space.shape}")
+    return int(space.ravel([(q - 1) // 2, (r - 1) // 2]))
 
 
 def home_corners(space: LatticeSpace) -> tuple[int, int]:
@@ -103,14 +156,15 @@ def make_board(
 
     Obstacles come from smooth noise (`worlds.noise`, see `WAVENUMBERS`), made symmetric under
     the half turn that swaps the homes (`game.symmetric`). Walls take the highest tiles and
-    rubble the next ones, sparing the homes (`game.highest`). Open tiles cut off from the homes
-    become walls (`game.pockets`), so every open tile can be reached. A board whose homes are
-    cut off from each other (`game.joined`) is drawn again.
+    rubble the next ones, sparing the homes (`game.highest`) and the point at the center with the
+    tiles around it. Open tiles cut off from the homes become walls (`game.pockets`), so every
+    open tile can be reached. A board whose homes and point are cut off from each other
+    (`game.joined`) is drawn again.
 
     Parameters
     ----------
     shape : tuple of int
-        ``(Q, R)``, each at least 2.
+        ``(Q, R)``, each odd and at least 3, so that the board has a center (`center_cell`).
     seed : int
         Seed of the noise. The same seed gives the same board.
     walls : float, default 0.08
@@ -131,7 +185,8 @@ def make_board(
     TypeError
         If an argument has the wrong type.
     ValueError
-        If an argument is out of range, or no board joining the homes is found.
+        If an argument is out of range, an axis has an even length, or no board joining the
+        homes and the point is found.
     """
     space = board_space((check_int(shape[0], "shape", 2), check_int(shape[1], "shape", 2)))
     seed = check_int(seed, "seed", minimum=0)
@@ -144,15 +199,26 @@ def make_board(
     outside = home < 0
     rng = np.random.default_rng(seed)
     corners = home_corners(space)
+    center = center_cell(space)
+    around = space.radius_graph(1.0)
+    clear = np.append(around.indices[around.indptr[center] : around.indptr[center + 1]], center)
+    point = np.zeros(space.n_cells, dtype=np.bool_)
+    point[center] = True
     for _ in range(_ATTEMPTS):
         height = symmetric(noise(space.centers, rng, scales=WAVENUMBERS), opposite)
         wall = highest(height, walls, outside)
         rough = highest(height, walls + rubble, outside) & ~wall
+        wall[clear] = rough[clear] = False
         open_ = ~(wall | rough)
-        if joined(space, open_, corners):
+        if joined(space, open_, [*corners, center]):
             wall |= pockets(space, open_, corners[0])
             return TacticsState(
                 space,
-                {TacticsState.wall: wall, TacticsState.rubble: rough, TacticsState.home: home},
+                {
+                    TacticsState.wall: wall,
+                    TacticsState.rubble: rough,
+                    TacticsState.home: home,
+                    TacticsState.point: point,
+                },
             )
-    raise ValueError(f"no board of {walls} walls and {rubble} rubble joins the homes")
+    raise ValueError(f"no board of {walls} walls and {rubble} rubble joins homes and point")

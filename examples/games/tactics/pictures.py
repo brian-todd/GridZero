@@ -1,9 +1,9 @@
 """Pictures of Tactics: the board as hexagons, and the units on it.
 
 Tiles are drawn as polygons rather than rasters, so a picture stays sharp at any size: open
-ground, walls, rubble and the two homes. Each unit is a disc in its team's color with its kind's
-letter, a tick toward the direction it faces, and its hit points. A tile an archer watches gets
-a cross in the archer's color.
+ground, walls, rubble, the two homes, and the point in its owner's color. Each unit is a disc in
+its team's color with its kind's letter, a tick toward the direction it faces, and its hit
+points. A tile an archer watches gets a cross in the archer's color.
 """
 
 import numpy as np
@@ -20,10 +20,11 @@ TEAM_COLORS = ((0.75, 0.22, 0.17), (0.17, 0.35, 0.63))
 _GROUND = (0.87, 0.83, 0.71)
 _WALL = (0.22, 0.22, 0.24)
 _RUBBLE = (0.58, 0.49, 0.39)
+_POINT = (0.95, 0.78, 0.15)
 
 
 def draw(game: Tactics, position: TacticsPosition, ax: Axes | None = None) -> Axes:
-    """Draw a position: the board, the units, their facing and hit points, and watched tiles.
+    """Draw a position: the board, the point, the units, their facing and hp, and watched tiles.
 
     Parameters
     ----------
@@ -47,6 +48,8 @@ def draw(game: Tactics, position: TacticsPosition, ax: Axes | None = None) -> Ax
         colors[state.home == team] = 0.6 * np.array(_GROUND) + 0.4 * np.array(color)
     colors[state.rubble] = _RUBBLE
     colors[state.wall] = _WALL
+    owner = position.hold.owner
+    colors[state.point] = TEAM_COLORS[owner] if owner >= 0 else _POINT
     ax = render.cells(state.space, colors, ax)
     u = state.units
     cells = np.flatnonzero(state.occupied)

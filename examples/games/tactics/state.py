@@ -2,12 +2,13 @@
 
 Units are fields per cell in a `NestedState`, since one unit per cell is a rule of the game: an
 empty tile holds ``kind == -1``. Moves and swaps permute cells in every field of `Unit`. The few
-values that aren't per cell (the seed, the count of steps and rounds, the result) are kept by a
-`TacticsPosition` beside the state.
+values that aren't per cell (the seed, the count of steps and rounds, the result, who holds the
+point) are kept by a `TacticsPosition` beside the state.
 """
 
 from dataclasses import dataclass
 from enum import IntEnum
+from typing import NamedTuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -38,7 +39,7 @@ class Unit(NestedState):
     swapped = Field(np.bool_)
     """Has swapped this round, which uses up its movement."""
     attacked = Field(np.bool_)
-    """Has attacked or deferred its attack this round."""
+    """Has attacked, deferred its attack or worked on a tile this round."""
     faced = Field(np.bool_)
     """Has turned since its last move, attack or swap, so may not turn again until then."""
     done = Field(np.bool_)
@@ -47,6 +48,16 @@ class Unit(NestedState):
     """Was attacked this round: later attackers get a bonus."""
     watch = Field(np.int32, default=-1)
     """The tile an archer deferred its attack onto, or -1."""
+    spotted = Field(np.int32, default=-1)
+    """Under fog, the tile where the other side believes the unit to be: its own while that side
+    sees it, else where it was last seen, or the hidden tile nearest to there once that side has
+    looked there and found it gone. -1 without fog, and before the battle starts."""
+    spotted_hp = Field(np.int16)
+    """Its hit points when the other side last saw it."""
+    spotted_facing = Field(np.int8)
+    """Its facing when the other side last saw it."""
+    spotted_round = Field(np.int16)
+    """The round in which the other side last saw it."""
 
 
 class TacticsState(State):
@@ -54,12 +65,14 @@ class TacticsState(State):
 
     space: LatticeSpace
     """The board: a 2-D lattice, hexes in every game so far."""
-    wall = Field(np.bool_, static=True)
-    """Blocks movement and sight."""
-    rubble = Field(np.bool_, static=True)
-    """Blocks movement only."""
+    wall = Field(np.bool_)
+    """Blocks movement and sight. Engineers change it, so it isn't static."""
+    rubble = Field(np.bool_)
+    """Blocks movement only. Engineers change it, so it isn't static."""
     home = Field(np.int8, static=True)
     """The team that deploys on the tile, or -1."""
+    point = Field(np.bool_, static=True)
+    """The tile the sides fight over (`objective`)."""
     units = Nested(Unit)
 
     @derived(wall, rubble)
@@ -93,8 +106,25 @@ class Verb(IntEnum):
     """Turn to direction 0; ``FACE + d`` turns to direction ``d``."""
     END = 10
     """End the unit's turn."""
-    PLACE = 11
+    BUILD = 11
+    """Raise the adjacent tile one step: open to rubble, rubble to wall."""
+    BREAK = 12
+    """Lower the adjacent tile one step: wall to rubble, rubble to open."""
+    PLACE = 13
     """Deploy a unit of kind 0 on the cell; ``PLACE + k`` deploys kind ``k``."""
+
+
+class Hold(NamedTuple):
+    """Who holds the point, and for how many rounds in a row (`objective`)."""
+
+    owner: int = -1
+    """The team that last had a unit on the point at a round's end, or -1 if none ever has."""
+    clock: int = 0
+    """Round ends in a row the owner has held it, the capture included."""
+
+
+NOBODY = Hold()
+"""The point before anyone has captured it."""
 
 
 @dataclass(frozen=True, eq=False)
@@ -123,9 +153,17 @@ class TacticsPosition(Position[TacticsState, Event]):
         What the step that made this position did, in order (see `events`).
     round : int, default 0
         0 during deployment, then the round being played, from 1.
+    hold : Hold, default NOBODY
+        Who holds the point.
+    belief : int, default -1
+        The team whose belief this is, under fog (`Tactics.view`): its own units as they are, and
+        the other side's where it sees them or last did. -1 for the position itself. A belief
+        is played on as a game that hides nothing, so a search plans on what its player knows.
     """
 
     round: int = 0
+    hold: Hold = NOBODY
+    belief: int = -1
 
     @property
     def deploying(self) -> bool:

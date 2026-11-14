@@ -38,10 +38,8 @@ obvious way to write a model, a game, a player and an experiment.
   then scored by tallies, Elo ladders and tests of whether a seat has the edge. One set of
   checks says whether a new game keeps the promises of a game.
 - **Agents:** a uniform player; exact values of small games; Gumbel AlphaZero with chance
-  nodes; MuZero, planning on a learned model from a player's view alone, with EfficientZero's
-  consistency loss, Reanalyze and Stochastic MuZero as options; imitation, PPO, and players
-  that ask a local language model. Self-play runs in actor processes around one GPU inference
-  server.
+  nodes; MuZero, planning on a learned model from a player's view alone; imitation and PPO.
+  Self-play runs in actor processes around one GPU inference server.
 - **Pictures:** globes and maps of planets, flat maps of boards, a viewer that steps through a
   game in a window or saves a GIF, and training curves that refresh while a run trains.
 
@@ -375,7 +373,7 @@ A few principles hold throughout:
 | Package | What it does |
 |---|---|
 | `game` | The `Game` and `Player` protocols, positions and actions, `play`, `series` in processes, records and `replay`, `tally`, `ladder` and `fairness`, and helpers that make a board fair (`symmetric`, `zones`, `joined`) |
-| `agents` | Players of any game: `UniformPlayer`, Gumbel AlphaZero search with chance nodes (`AlphaZeroPlayer`), its residual network and training loop on the GPU (`net`, `zero_train`), MuZero's search over a learned world model (`muzero`, `muzero_net`, `muzero_train`), imitation and PPO, exact values of small games (`exact`), and LLM players (`llm`). Only the networks and their training import Torch, and the package doesn't import them |
+| `agents` | Players of any game: `UniformPlayer`, Gumbel AlphaZero search with chance nodes (`AlphaZeroPlayer`), its residual network and training loop on the GPU (`net`, `zero_train`), MuZero's search over a learned world model (`muzero`, `muzero_net`, `muzero_train`), imitation and PPO, and exact values of small games (`exact`). Only the networks and their training import Torch, and the package doesn't import them |
 | `worlds` | A `Planet` (`generate_planet`) has continents, seas and a climate, with land, coasts and landmasses, on an icosphere or projected onto a lattice as its map. `generate_terrain` makes continents and seas for any 2-D lattice, such as a board for a game, and one seed gives the same continents at every resolution |
 | `render` | `globe` and `world_map` (Mollweide or equirectangular) picture a spherical mesh as images, and `flat_map` a 2-D lattice, such as a board or a planet's map, with `colorize`, `mix` and `over` for per-cell colors; `Browser` steps a figure through its frames, such as the positions of a game |
 
@@ -465,7 +463,7 @@ src/gridzero/
     core/          spaces, queries (paths, ranges, sight), neighborhoods, operators,
                    fields, intents, actions, the loop
     game/          games beside simulations: protocols, play, series, records, ladders
-    agents/        players of any game: AlphaZero and MuZero, networks, training, LLM players
+    agents/        players of any game: AlphaZero and MuZero, networks, training
     worlds/        planets, and terrain for lattices
     render.py      globes and maps of planets, and flat maps of lattices
 examples/          whole models on the package, each with its experiments (README.md):
@@ -475,7 +473,6 @@ examples/          whole models on the package, each with its experiments (READM
 run.py             runs any experiment of the examples
 tests/             mirrors src/ and examples/
 benchmarks/        timing scripts, run as modules (python -m benchmarks.bench)
-compose.yaml       a local LLM server for LLM players
 ```
 
 ## Development

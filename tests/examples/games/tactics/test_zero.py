@@ -6,6 +6,7 @@ import pytest
 
 from examples.games.tactics import (
     GreedyPlayer,
+    Hold,
     TacticsPosition,
     Verb,
     board_space,
@@ -97,8 +98,12 @@ def test_the_search_plays_a_winning_action_for_either_team(make_battle):
 
 
 def test_with_noise_the_search_mostly_plays_winning_actions(make_battle):
+    # With a flat prior and the default value weight (0.03), noise outweighs the values more
+    # often: 5 of these 20 searches find the winning blow. At 0.1, 15 or more do.
     position, _ = finishing_blow(make_battle)
-    player = AlphaZeroPlayer(FakeEvaluator(), simulations=64, considered=64, noise=True)
+    player = AlphaZeroPlayer(
+        FakeEvaluator(), simulations=64, considered=64, noise=True, c_scale=0.1
+    )
     q = [search(player, SMALL, position, seed) for seed in range(20)]
     assert sum(found.q[found.action] > 0.9 for found in q) >= 15
 
@@ -180,7 +185,7 @@ def test_completed_values_mix_the_root_value_with_the_visited_means(make_battle)
     mixed = (0.9 + n.sum() * weighted) / (n.sum() + 1)
     completed = np.where(seen, np.nan_to_num(q), mixed)
     completed = (completed - completed.min()) / (completed.max() - completed.min())
-    sigma = (50 + n.max()) * 0.1 * completed
+    sigma = (50 + n.max()) * player.c_scale * completed
     expected = np.exp(np.log(prior) + sigma - sigma.max())
     np.testing.assert_allclose(found.policy[legal], expected / expected.sum(), rtol=1e-9)
     assert found.value == pytest.approx((0.9 + (n[seen] * q[seen]).sum()) / (1 + n.sum()))
@@ -205,25 +210,25 @@ def test_below_the_root_visits_follow_the_improved_policy(make_battle, at):
 
 
 def test_chance_edges_sample_the_dice(make_battle):
-    # One round only, the enemy done: after a miss nothing can change before the draw at the
-    # cap, so the attack's value is the chance of a hit plus half the chance of a miss.
-    game = dataclasses.replace(SMALL, max_rounds=1)
-    position = make_battle([piece(5, 4, FOOT, 0), piece(4, 4, FOOT, 1, hp=1, done=True)], game=game)
+    # One round only, the enemy done and owning the point: after a miss nothing can change before
+    # it wins at the cap, so the attack's value is the chance of a hit.
+    game = dataclasses.replace(SMALL, max_rounds=1, capture_by=1)
+    pieces = [piece(5, 4, FOOT, 0), piece(4, 4, FOOT, 1, hp=1, done=True)]
+    position = make_battle(pieces, game=game, hold=Hold(1, 1))
     target = int(np.flatnonzero(position.state.units.team == 1)[0])
     chance = game.odds(position, game.active(position), target).chance
-    evaluator = FakeEvaluator(favoring(Verb.ATTACK, target, weight=20.0))
+    evaluator = FakeEvaluator(favoring(Verb.ATTACK, target, weight=20.0), value=lambda p: 0.0)
     player = AlphaZeroPlayer(evaluator, simulations=400, considered=1)
     found = search(player, game, position)
     assert found.visits[Verb.ATTACK, target] == 400
-    expected = chance + (1 - chance) / 2
-    spread = 0.5 * np.sqrt(chance * (1 - chance) / 400)
-    assert abs(found.q[Verb.ATTACK, target] - expected) < 4 * spread
+    spread = np.sqrt(chance * (1 - chance) / 400)
+    assert abs(found.q[Verb.ATTACK, target] - chance) < 4 * spread
 
 
 def test_outcomes_that_leave_the_same_state_share_a_child(make_battle):
     # The same battle with 3 hp left: a hit and a miss each always leave the same state, so
     # after both have happened, every visit goes deeper and the evaluator sees each once.
-    game = dataclasses.replace(SMALL, max_rounds=1)
+    game = dataclasses.replace(SMALL, max_rounds=1, capture_by=1)
     position = make_battle([piece(5, 4, FOOT, 0), piece(4, 4, FOOT, 1, hp=3, done=True)], game=game)
     target = int(np.flatnonzero(position.state.units.team == 1)[0])
     evaluator = FakeEvaluator(favoring(Verb.ATTACK, target, weight=20.0))
@@ -334,10 +339,6 @@ def test_parameters_are_checked(not_an_integer):
         AlphaZeroPlayer("network")  # ty: ignore[invalid-argument-type]  # not callable on purpose
 
 
-DECIDED = dataclasses.replace(TINY, decide_at_cap=True)
-"""TINY with a winner at the round cap: the fake evaluator's games all reach it."""
-
-
 def quick(evaluator=None, noise=True):
     return AlphaZeroPlayer(evaluator or FakeEvaluator(), simulations=4, considered=4, noise=noise)
 
@@ -377,7 +378,7 @@ def test_the_evaluator_judges_one_leaf_of_every_game_at_once():
 
 
 def test_kept_decisions_hold_policies_over_their_legal_actions_and_outcomes():
-    experience, played = self_play(DECIDED, quick(), [8, 9], keep=1.0)
+    experience, played = self_play(TINY, quick(), [8, 9], keep=1.0)
     assert all(p.winner is not None for p in played)
     assert len(experience) == sum(p.searched for p in played)
     n_cells = TINY.shape[0] * TINY.shape[1]
@@ -402,33 +403,33 @@ def test_self_play_keeps_what_searching_alone_decides_in_the_deciding_teams_fram
         return np.arange(mask.size, dtype=np.float64).reshape(mask.shape) / mask.size
 
     player, seed, keep = quick(FakeEvaluator(favor=ramp)), 15, 0.5
-    experience, [played] = self_play(DECIDED, player, [seed], keep=keep)
+    experience, [played] = self_play(TINY, player, [seed], keep=keep)
     rng = np.random.default_rng(np.random.SeedSequence(seed, spawn_key=(4,)))
-    position, kept = DECIDED.start(seed), []
+    position, kept = TINY.start(seed), []
     while not position.over:
-        legal = DECIDED.legal(position)
+        legal = TINY.legal(position)
         if np.count_nonzero(legal) == 1:
             verb, cell = np.argwhere(legal)[0]
             action = (int(verb), int(cell))
         else:
-            result = player.search(DECIDED, position, rng)
+            result = player.search(TINY, position, rng)
             if rng.random() < keep:
                 kept.append((position, legal, result.policy))
             action = result.action
-        position = DECIDED.step(position, action)
+        position = TINY.step(position, action)
     assert position.winner is not None
-    assert {DECIDED.player(p) for p, _, _ in kept} == {0, 1}
+    assert {TINY.player(p) for p, _, _ in kept} == {0, 1}
     assert len(experience) == len(kept) == played.kept
     assert np.ptp(experience.policy) > 0
     assert played.plies == position.ply
     for i, (p, legal, policy) in enumerate(kept):
-        team = DECIDED.player(p)
-        own = DECIDED.frame(team).into(legal)
-        np.testing.assert_array_equal(experience.obs[i], np.rint(DECIDED.observe(p, team) * 255))
+        team = TINY.player(p)
+        own = TINY.frame(team).into(legal)
+        np.testing.assert_array_equal(experience.obs[i], np.rint(TINY.observe(p, team) * 255))
         np.testing.assert_array_equal(experience.legal[i], np.packbits(own.ravel()))
         np.testing.assert_array_equal(
             experience.policy[experience.start[i] : experience.start[i + 1]],
-            DECIDED.frame(team).into(policy)[own].astype(np.float32),
+            TINY.frame(team).into(policy)[own].astype(np.float32),
         )
         assert experience.ply[i] == p.ply
         assert experience.outcome[i] == (1.0 if team == position.winner else -1.0)

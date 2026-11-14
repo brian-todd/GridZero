@@ -14,8 +14,8 @@ or rules, its players, how to run its experiments, and what they found.
 | [`simulations/biomes`](simulations/biomes) | Grassland and forest on a planet, each with its grazers, and wolves that hunt in both | Nested states, two levels deep, and apparent competition |
 | [`simulations/settlers`](simulations/settlers) | Farmers and herders settling a world of seasons, droughts, raids and worn-out soil | Eight phases over thousands of steps |
 | [`simulations/population_evolution`](simulations/population_evolution) | One founder species on an empty planet, adapting to its climates and splitting into species | A heritable trait as a component axis, against exact theory |
-| [`games/tactics`](games/tactics) | A two-player skirmish on a 24x24 hex board with walls, rubble and four kinds of unit | Dice, long games, search and AlphaZero on a large board |
-| [`games/in_a_row`](games/in_a_row) | k in a row, from tic-tac-toe to Connect Four | AlphaZero from scratch, against exact values |
+| [`games/tactics`](games/tactics) | A two-player skirmish on a 25x25 hex board under fog of war: pick a squad, fight over one point, and change the terrain with an engineer | Dice, a choice of pieces, an objective built to be reworked, units a side can't see, search and AlphaZero on a large board |
+| [`games/in_a_row`](games/in_a_row) | k in a row, from tic-tac-toe to Connect Four | AlphaZero from scratch, against exact values; code players fit to an agent; a page to play them on |
 | [`games/voronoi`](games/voronoi) | The Voronoi game on a planet: stones on land, the most land nearest one's stones wins | Any number of players, off a lattice |
 | [`games/colonies`](games/colonies) | Orders on a planet under fog of war, each round resolved as a simulation | Hidden information, moves made at once, players knocked out, and MuZero |
 
@@ -31,9 +31,27 @@ Each README dates its findings; these are the main ones.
   its search, it beat a scripted player that wins when it can and blocks the other's wins
   96-2-2, and it opens in the center column, the only winning first move. Exact values of small
   boards found a flaw in the search, since fixed.
+- **A search can stop looking** (in_a_row, 2026-11-05): rescaling values at every node, as `mctx`
+  does, locked nodes below the root onto the first action that looked better than the node's own
+  value. Rescaling at the root only beat the old search 77-22-1 with fitted constants at 1024
+  simulations, and made budgets count: a flat top of the ladder spread out.
 - **Search beats heuristics on Tactics** (2026-10-25): open-loop tree search beat the greedy
   player 89% of the time. AlphaZero learned on a 9x9 board, but its self-play drifted into
-  draws and never beat greedy: Tactics' incentives stall it.
+  draws and never beat greedy: Tactics' incentives stall it. So Tactics now has an objective and
+  no draws (2026-11-05): a greedy that seeks the point beats a sitter 240-0 and a pure fighter
+  196-44, and search beats greedy 73%. AlphaZero doesn't beat greedy on these rules yet, even
+  after imitating it. A network taught by the search player holds level with greedy once it
+  searches. An engineer played by search works about 3.7 tiles a game, and is worth about an
+  archer so far.
+  A code player fit to the search player beats greedy 135-57 and matches the search player at a third of
+  its time per decision, also on a board it wasn't fit on, once one weight is corrected by hand: the
+  search's own value is blind to knights.
+  Under fog its static value falls behind (102-90 against greedy); read 4 unit turns of greedy
+  play ahead it beats greedy 131-61 and is level with the search player, in about two thirds of a
+  second a unit's turn.
+  A network warmed up by PPO self-play (2026-11-11, 77,000 games in 100 minutes) is the first on
+  these rules to beat greedy, 124-68 alone, and the AlphaZero search on it is level with the search
+  player; its value says who wins no better than the code player's formula.
 - **Self-play drifts into draws** in both two-player board games. A study on a small board
   against the exact solver is open.
 - **The simulations match their theory:** R*, the ideal free distribution, a trophic cascade,
@@ -91,10 +109,3 @@ series(game, [a, b], starts, EVAL_SEED, workers=CORES)   # or ladder for one aga
 Watching a game is one experiment per game, `<game>.watch [start] [prefix] [players...]`,
 which steps through a game in a window or saves a GIF. The full conventions are in
 [`AGENTS.md`](../AGENTS.md), under "Design decisions".
-
-## Language models
-
-An LLM player (`gridzero.agents.llm.LLMPlayer`) asks a model served on this machine by
-llama.cpp, which `compose.yaml` at the root starts (it needs a GPU with the NVIDIA container
-toolkit, and downloads a 4.6 GB model the first time): `docker compose up -d`, then `down`. No
-example uses one since Tactics' was retired on 2026-10-31.

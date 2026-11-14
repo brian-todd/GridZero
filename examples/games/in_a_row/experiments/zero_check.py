@@ -25,7 +25,28 @@ from gridzero.agents import AlphaZeroPlayer, UniformPlayer
 from gridzero.agents.net import NetEvaluator, NetPlayer, PolicyNet
 from gridzero.game import ladder
 
-CHANNELS, BLOCKS = 32, 4  # as zero_scratch saved them: the weights don't record it (finding E2)
+CHANNELS, BLOCKS = 32, 4  # as zero_scratch saved them: the weights don't record it
+
+
+def saved_net(game: InARow, weights: str) -> PolicyNet:
+    """Return a network saved by ``zero_scratch``, on the CPU, ready to play.
+
+    Parameters
+    ----------
+    game : InARow
+        The rules it plays.
+    weights : str
+        The saved weights.
+
+    Returns
+    -------
+    PolicyNet
+        The network, in evaluation mode.
+    """
+    net = PolicyNet(game, channels=CHANNELS, blocks=BLOCKS)
+    net.load_state_dict(torch.load(weights, map_location="cpu"))
+    net.eval()
+    return net
 
 
 def main(weights: str, starts: str = "50", simulations: str = "96") -> None:
@@ -41,9 +62,7 @@ def main(weights: str, starts: str = "50", simulations: str = "96") -> None:
         The agent's simulations a decision.
     """
     game = InARow()
-    net = PolicyNet(game, channels=CHANNELS, blocks=BLOCKS)
-    net.load_state_dict(torch.load(weights, map_location="cpu"))
-    net.eval()
+    net = saved_net(game, weights)
     first = opening(game, NetEvaluator(net))
     print(
         f"{weights}: opens in column {first.column}, prior "

@@ -10,6 +10,7 @@ import numpy as np
 
 from examples.games.tactics import (
     DEFAULT_UNITS,
+    Hold,
     Tactics,
     TacticsPosition,
     TacticsState,
@@ -17,32 +18,58 @@ from examples.games.tactics import (
 )
 from gridzero.core import Field
 
-FOOT, ARCHER, KNIGHT, CAPTAIN = range(4)
+FOOT, ARCHER, KNIGHT, CAPTAIN, ENGINEER = range(5)
 """The kinds of the default rules."""
 
 FIRST_UNITS = (
-    dataclasses.replace(DEFAULT_UNITS[FOOT], atk=2),
+    dataclasses.replace(DEFAULT_UNITS[FOOT], atk=2, braces=False),
     DEFAULT_UNITS[ARCHER],
-    dataclasses.replace(DEFAULT_UNITS[KNIGHT], move=4),
+    dataclasses.replace(
+        DEFAULT_UNITS[KNIGHT], atk=3, move=4, double_move=True, charge=0, extra_places=0
+    ),
     DEFAULT_UNITS[CAPTAIN],
 )
 """The units of the first rules (2026-10-24), which the tests' hand-worked numbers assume, with
-`SMALL` and `TINY` flanking x2 and drawing at the round cap as they did, so that tuning the
-defaults (T6, T7) leaves the tests of mechanics alone."""
+`SMALL` and `TINY` flanking x2, with no bonus on overwatch, turns shuffled every round, units
+engaged until the round ends, the point held for 5 rounds and no fog, as they had, so that tuning
+the defaults leaves the tests of mechanics alone."""
 
-SMALL = Tactics(units=FIRST_UNITS, flank_factor=2, shape=(9, 9), home_depth=4, decide_at_cap=False)
+SMALL = Tactics(
+    units=FIRST_UNITS,
+    caps=(6, 3, 2, 1),
+    team_size=12,
+    flank_factor=2,
+    overwatch_bonus=0,
+    shuffle_each_round=True,
+    engaged_until_turn=False,
+    hold_rounds=5,
+    shape=(9, 9),
+    home_depth=4,
+    fog=False,
+)
 """The first rules on a 9x9 board, for hand-made positions: homes of 16 tiles."""
 
 TINY = Tactics(
     units=FIRST_UNITS,
     flank_factor=2,
+    overwatch_bonus=0,
+    shuffle_each_round=True,
+    engaged_until_turn=False,
+    hold_rounds=5,
     shape=(9, 9),
-    counts=(2, 1, 1, 1),
+    caps=(2, 1, 1, 1),
+    team_size=5,
     home_depth=3,
     max_rounds=6,
-    decide_at_cap=False,
+    capture_by=6,
+    fog=False,
 )
 """Five units a side on a 9x9 board, for whole games."""
+
+WORKS = Tactics(shape=(9, 9), home_depth=4, team_size=5, max_rounds=12, capture_by=8, fog=False)
+"""The default kinds on a 9x9 board, with an engineer, for hand-made positions and whole games,
+without fog, as the first rules were: hand-made positions say nothing of what was last seen
+where, and `test_fog` tests fog."""
 
 
 @dataclass
@@ -85,7 +112,8 @@ def mirrored(game: Tactics, position: TacticsPosition) -> TacticsPosition:
     """Return a position turned half a turn on its board, with the teams swapped.
 
     Cells map through `LatticeSpace.opposite`, directions turn by 3, teams 0 and 1 trade places,
-    and the tiles archers watch map with the cells.
+    the tiles archers watch and those units were last seen on map with the cells, and the point's
+    owner trades places too.
     """
     state = position.state
     m = state.space.opposite()
@@ -95,7 +123,10 @@ def mirrored(game: Tactics, position: TacticsPosition) -> TacticsPosition:
     present = u.kind[m] >= 0
     values[TacticsState.units.team] = np.where(present, 1 - u.team[m], -1)
     values[TacticsState.units.facing] = np.where(present, (u.facing[m] + 3) % 6, 0)
-    watch = u.watch[m]
-    values[TacticsState.units.watch] = np.where(watch >= 0, m[np.maximum(watch, 0)], -1)
+    for tiles in (TacticsState.units.watch, TacticsState.units.spotted):  # fields of cell ids
+        cells = state[tiles][m]
+        values[tiles] = np.where(cells >= 0, m[np.maximum(cells, 0)], -1)
     state = TacticsState(state.space, values)
-    return TacticsPosition(state, position.seed, ply=position.ply, round=position.round)
+    owner, clock = position.hold
+    hold = Hold(1 - owner if owner >= 0 else owner, clock)
+    return TacticsPosition(state, position.seed, ply=position.ply, round=position.round, hold=hold)

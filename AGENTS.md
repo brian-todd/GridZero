@@ -17,7 +17,7 @@ comes second but is taken seriously.
 **Current focus:** the `core` package (`src/gridzero/core/`), which covers
 grids, neighborhoods, state, actions and the update loop. Beside it, `worlds` and `render`
 build planets, terrain and pictures from `core`. `game` holds the game layer beside `core`,
-`agents` what plays any game: the AlphaZero search, network and training, and LLM players,
+`agents` what plays any game: the AlphaZero search, network and training, and MuZero's,
 and `examples/games/` four games on them: `tactics`, a two-player skirmish on hexes,
 `in_a_row`, from tic-tac-toe to Connect Four, `voronoi`, stones placed on a planet by any
 number of players, and `colonies`, orders on a planet under fog of war, resolved by `core`'s
@@ -36,9 +36,9 @@ src/gridzero/game/    games beside simulations: the Game and Player protocols, P
 src/gridzero/agents/  players of any game: a uniform one, Observable, Revealable, Learnable and
                       Frame, the AlphaZero search (zero.py), its network (net.py) and training
                       (zero_train.py), MuZero's world model (muzero.py, muzero_net.py,
-                      muzero_train.py), imitation (imitate.py), PPO (ppo.py), LLM players
-                      (llm.py), exact values of small games (exact.py); Torch only in the
-                      networks and the training modules, which the package doesn't import
+                      muzero_train.py), imitation (imitate.py), PPO (ppo.py), exact values of
+                      small games (exact.py); Torch only in the networks and the training
+                      modules, which the package doesn't import
 src/gridzero/worlds/  Planet (planet.py), optional terrain (terrain.py), noise and relief
                       (noise.py)
 src/gridzero/         render.py (globes, maps, flat maps, cell polygons, text)
@@ -58,7 +58,6 @@ tests/                mirrors src/ and examples/. Shared fixtures and factories 
                       agents_demo.py, and helpers the Tactics tests import in tactics_demo.py
 benchmarks/           timing scripts, run as modules (python -m benchmarks.bench): bench.py times
                       both paths and the step target
-compose.yaml          the local LLM server for LLM players (llama.cpp, pinned image)
 ```
 
 ## Commands
@@ -72,7 +71,6 @@ uv run ruff format .             # format
 uv run ty check                  # type-check src/, examples/, tests/ and benchmarks/
 uv run python run.py                             # list the experiments; run.py <name> [args] runs one
 taskset -c 4 uv run python -m benchmarks.bench   # timings, pinned to one performance core
-docker compose up -d             # the local LLM server (llama.cpp) for LLM players; `down` stops it
 ```
 
 **Before calling work done:**
@@ -80,9 +78,6 @@ docker compose up -d             # the local LLM server (llama.cpp) for LLM play
 
 - Python 3.15. Run Python only through `uv run`, never `pip install`.
 - Add dependencies only with `uv add` or `uv add --dev`, and **ask before adding one**.
-- Language models are reached over HTTP with the standard library (`agents/llm.py`),
-  not a client package. The suite never needs the server: tests pass a fake `Chat`. No
-  example has an LLM player since Tactics' was retired on 2026-10-31.
 - We build on what is already locked: NumPy, SciPy, Numba, Matplotlib, pandas and
   scikit-learn. Torch and CUDA are available. GPU work in `core` is deferred; the networks of
   `agents` train on the GPU (RTX 3080, 10 GB: mind the memory) and play on the CPU.
@@ -253,6 +248,17 @@ def pull(x: NDArray[np.float32], op: NeighborOperator) -> NDArray[np.float32]:
     8), so `pull` keeps `S @ x.T`.
   - **SciPy sparse products overflow to inf silently,** even under `np.errstate(over="raise")`.
     Check their results when values can be huge.
+- **A game step in Python** (Tactics, 2026-11-06, i9-12900K, one pinned core, 15x15 to 25x25):
+  `step` about 85 us and `legal` about 50 us, nearly the same at both sizes, and spread over many
+  small calls, so no single fix helps much. Together, these small changes gave 12-18%, playing the
+  same games: reuse what `legal` found in `step`; cache what depends only on the space or an offset;
+  `x.nonzero()[0]` and methods such as `x.any()` and `x.argmin()`
+  instead of NumPy's Python wrappers (about 3%, and only on 1-D masks: `nonzero()[0]` of a 2-D
+  array quietly gives its first axis). Neither a higher GC threshold nor CPython's JIT helped (the
+  JIT ran 7-14% slower).
+- **Cores:** throughput of greedy games at 8, 16 and 24 processes was 7.4x, 10.3x and 11.3x one
+  process, and of a Numba kernel 8.1x, 11.5x and 13.2x: past the 8 performance cores it is the
+  chip, not Python. Use every core, and expect each process to run at about half its pinned speed.
 - **Searches** (`steps`, `reach`, `path`; 200x200 hexes, 40k cells): SciPy's `dijkstra` and a
   Numba binary heap tie on a whole weighted search (2.8 against 2.6 ms). Numba wins where
   searches stop early or need no heap: a budget of 5 moves in 12-18 µs against 250-290 µs, a

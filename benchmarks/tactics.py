@@ -4,7 +4,8 @@ Run from the repository root, pinned to one performance core for steady numbers:
 
     taskset -c 4 uv run python -m benchmarks.tactics
 
-Two kinds of game on the default rules (24x24 boards since 2026-10-25, 32x32 before): random
+Two kinds of game on the default rules (25x25 boards since 2026-11-05, 24x24 from 2026-10-25,
+32x32 before): random
 players (who end a unit's turn one time in ten when they could act), and two greedy players.
 Figures are means over every decision of a few games of each, in microseconds, after a warm-up
 game that compiles the kernels.

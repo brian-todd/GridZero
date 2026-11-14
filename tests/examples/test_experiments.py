@@ -1,8 +1,12 @@
 """Every experiment that finishes in seconds at its smallest, run once through ``run.py``.
 
-Not run here: ``tactics.watch`` (a GIF of hundreds of frames, a minute), and the training
-experiments ``tactics.zero_scratch``, ``in_a_row.zero_scratch`` and
-``colonies.muzero_scratch`` (the GPU, and half a minute to minutes each).
+Not run here: ``tactics.watch`` (a GIF of hundreds of frames, a minute),
+``tactics.code_games`` (a minute a game, whose parts `test_lessons` runs small),
+``in_a_row.code_report`` (a deep search over hundreds of positions, whose parts `test_report`
+runs small), ``in_a_row.play`` (a server, until stopped, whose parts `test_play` starts and plays),
+and the training experiments ``tactics.zero_scratch``, ``tactics.ppo``,
+``in_a_row.zero_scratch`` and ``colonies.muzero_scratch`` (the GPU, and half a minute to minutes
+each).
 `test_run` imports each of them and checks its arguments.
 """
 
@@ -16,8 +20,18 @@ import run
 from examples.games.colonies import EVAL_SEED, Colonies, Raider
 from examples.games.colonies.experiments import muzero_ladder
 from examples.games.colonies.learned import player
-from examples.games.in_a_row import InARow
-from examples.games.tactics import Tactics
+from examples.games.in_a_row import (
+    MOVE_FEATURES,
+    VALUE_FEATURES,
+    FittedEvaluator,
+    InARow,
+    Lessons,
+)
+from examples.games.tactics import EVAL_SEED as TACTICS_SEED
+from examples.games.tactics import Lessons as TacticsLessons
+from examples.games.tactics import SearchPlayer, Tactics, lessons_of, small_rules
+from examples.games.tactics.experiments import code_ladder
+from examples.games.tactics.fit import LOOKAHEAD
 from examples.games.voronoi import EVAL_SEED as VORONOI_SEED
 from examples.games.voronoi import Greedy, Voronoi
 from examples.simulations.biomes import Biomes
@@ -164,6 +178,96 @@ def test_search(capsys):
     assert "Check: search beats greedy at 1 simulations:" in out
 
 
+def test_tactics_code_games_refuses_a_prefix_already_used(capsys, tmp_path):
+    (tmp_path / "code_lessons.npz").write_text("")
+    with pytest.raises(FileExistsError, match="has been used"):
+        ran(capsys, "tactics.code_games", 1, tmp_path / "code")
+
+
+def test_tactics_code_ladder(capsys):
+    out = ran(capsys, "tactics.code_ladder", "hand", 1, 15, 1)
+    assert "1 simulations: " in out
+    assert " ms a decision, " in out
+    assert " ms a unit's turn." in out
+    assert "Against random " in out
+    assert ", greedy " in out
+
+
+def test_tactics_code_ladder_plays_a_replica_and_rivals_by_name(capsys):
+    out = ran(capsys, "tactics.code_ladder", "hand", 1, 15, "1,2", 1, "greedy")
+    assert "Against greedy " in out
+    assert "random" not in out
+    assert "2 simulations: " in out
+
+
+def test_tactics_code_ladder_replicas_have_starts_of_their_own():
+    assert code_ladder.first_start(0) == TACTICS_SEED
+    assert code_ladder.first_start(1) - code_ladder.first_start(0) >= 1000
+
+
+def test_tactics_fog_compares_the_open_game_with_fog(capsys):
+    out = ran(capsys, "tactics.fog", "hand", 1, 15, 1)
+    assert "In the open, greedy against itself: 2 games" in out
+    assert "Under fog, greedy against itself: 2 games" in out
+    assert out.count("Greedy with (1, 2, 2, 1, 1) against (3, 2, 1, 1, 1)") == 3
+    assert "under fog, every kind seeing 3" in out
+    assert out.count("The code player at 1 simulations against greedy") == 2
+
+
+def test_tactics_code_ladder_refuses_an_unknown_rival(capsys):
+    with pytest.raises(KeyError, match="nobody"):
+        ran(capsys, "tactics.code_ladder", "hand", 1, 15, 1, 0, "nobody")
+
+
+def test_tactics_code_fit_saves_constants_the_ladder_plays(capsys, tmp_path):
+    game = small_rules()
+    teacher = SearchPlayer(simulations=2, plans=2, depth=1, rollout_turns=1)
+    path = tmp_path / "games_lessons.npz"
+    games = [lessons_of(game, teacher, seed) for seed in range(3)]
+    TacticsLessons.join(games).save(path)
+    out = ran(capsys, "tactics.code_fit", tmp_path / "code", path)
+    assert "Value on 1 games kept out" in out
+    assert "Prior on 1 games kept out" in out
+    saved = tmp_path / "code_fit.json"
+    assert set(json.loads(saved.read_text())) == {"value", "intercept", "prior", "lookahead"}
+    assert json.loads(saved.read_text())["lookahead"] == 0
+    played = tmp_path / "code_player.json"
+    assert json.loads(played.read_text())["lookahead"] == LOOKAHEAD
+    assert "Against random " in ran(capsys, "tactics.code_ladder", played, 1, 15, 1)
+
+
+def test_tactics_code_fit_refuses_a_prefix_already_used(capsys, tmp_path):
+    (tmp_path / "code_fit.json").write_text("")
+    with pytest.raises(FileExistsError, match="has been used"):
+        ran(capsys, "tactics.code_fit", tmp_path / "code", "lessons.npz")
+
+
+def test_tactics_code_fit_needs_lessons(capsys, tmp_path):
+    with pytest.raises(ValueError, match="lessons"):
+        ran(capsys, "tactics.code_fit", tmp_path / "code")
+
+
+@pytest.mark.slow
+def test_rules(capsys, tmp_path):
+    out = ran(capsys, "tactics.rules", "greedy", 1, tmp_path / "rules", 1, 5)
+    assert "### Styles, 4 rounds to hold" in out
+    report = json.loads((tmp_path / "rules_rules.json").read_text())
+    assert set(report["self_play"]) == {"hold 5"}
+    assert "seeker v sitter" in report["styles"]
+    assert report["own_picks"] is None
+    assert report["rosters"]["scores"]
+
+
+@pytest.mark.slow
+def test_rules_with_a_code_player_reports_its_own_picks_and_no_styles(capsys, tmp_path):
+    out = ran(capsys, "tactics.rules", "hand", 1, tmp_path / "rules", 2, 5)
+    assert "### Its own picks, 4 rounds to hold" in out
+    report = json.loads((tmp_path / "rules_rules.json").read_text())
+    assert report["styles"] == {}
+    assert sum(report["own_picks"]["picked"].values()) == 4
+    assert report["rosters"]["scores"]
+
+
 def test_zero_check(capsys, weights):
     out = ran(capsys, "tactics.zero_check", weights["tactics"], 1, 2, "net")
     assert "Against net: " in out
@@ -172,3 +276,31 @@ def test_zero_check(capsys, weights):
 def test_in_a_row_zero_check(capsys, weights):
     out = ran(capsys, "in_a_row.zero_check", weights["four"], 1, 2)
     assert "agent, 2 simulations against threat" in out
+
+
+def test_in_a_row_code_fit_writes_a_fit_and_lessons_per_round(capsys, tmp_path, weights):
+    prefix = tmp_path / "code"
+    out = ran(capsys, "in_a_row.code_fit", weights["four"], 1, prefix, 2)
+    assert "Round 1: " in out
+    assert "at 64 simulations against threat" in out
+    assert FittedEvaluator.load(f"{prefix}_round1.json")
+    assert len(Lessons.load(f"{prefix}_lessons.npz")) > 0
+
+
+def test_in_a_row_code_ladder(capsys, tmp_path, weights):
+    fit = tmp_path / "fit.json"
+    FittedEvaluator((0.0,) * len(VALUE_FEATURES), 0.0, (0.0,) * len(MOVE_FEATURES)).save(fit)
+    out = ran(capsys, "in_a_row.code_ladder", weights["four"], fit, 1, 2)
+    assert "teacher: after each first column" in out
+    assert "us a simulation at 64 simulations" in out
+    for name in ("search", "lines", "fit", "teacher"):
+        assert f"2 simulations, {name} against uniform" in out
+    assert "against teacher at 2 " in out
+
+
+def test_in_a_row_code_fit_refuses_a_prefix_already_used(capsys, tmp_path, weights):
+    prefix = tmp_path / "code"
+    (tmp_path / "code_round2.json").write_text("{}")  # a round the new run might not reach
+    with pytest.raises(FileExistsError, match="prefix of its own"):
+        ran(capsys, "in_a_row.code_fit", weights["four"], 1, prefix, 1)
+    assert not (tmp_path / "code_lessons.npz").exists()

@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from examples.games.colonies.learned import BLOCKS, CHANNELS, network, player
-from gridzero.agents.muzero_net import NetModel, StochasticNetModel
+from gridzero.agents.muzero_net import NetModel
 
 
 @pytest.fixture(scope="module")
@@ -17,59 +17,50 @@ def weights(tmp_path_factory):
 
 def test_a_new_network_has_the_shared_size():
     net = network()
-    assert (net.channels, net.blocks, net.codes) == (CHANNELS, BLOCKS, 0)
+    assert (net.channels, net.blocks) == (CHANNELS, BLOCKS)
 
 
-def test_weights_without_codes_play_through_plain_dynamics(weights):
-    assert isinstance(player(weights)[1].model, NetModel)
-
-
-def test_a_bare_path_is_searched_below_the_root_over_every_action(weights):
+def test_a_bare_path_is_the_file_searched_without_noise(weights):
     name, searcher = player(weights, 12)
     assert name == "net"
-    assert (searcher.simulations, searcher.below, searcher.noise) == (12, "all", False)
+    assert isinstance(searcher.model, NetModel)
+    assert (searcher.simulations, searcher.noise) == (12, False)
 
 
-def test_tags_set_the_old_way_and_the_simulations(weights):
-    name, searcher = player(f"{weights}@root@64", 12)
-    assert name == "net@root@64"
-    assert (searcher.simulations, searcher.below) == (64, "root")
+def test_a_spec_sets_the_simulations(weights):
+    name, searcher = player(f"{weights}@64", 12)
+    assert name == "net@64"
+    assert searcher.simulations == 64
     loaded = searcher.model.net.state_dict()  # ty: ignore[unresolved-attribute]  # NetModel's net
     for key, value in network(weights).state_dict().items():
         torch.testing.assert_close(loaded[key], value)
 
 
-def test_an_unknown_tag_is_refused(weights):
-    with pytest.raises(ValueError, match="a tag is root or a number"):
-        player(f"{weights}@fast")
+def test_anything_but_a_number_after_the_path_is_refused(weights):
+    with pytest.raises(ValueError, match="a number of simulations"):
+        player(f"{weights}@root")
 
 
-def test_weights_saved_before_the_projection_load_and_play_the_same(weights, tmp_path):
-    old = {k: v for k, v in torch.load(weights).items() if not k.startswith("projection")}
-    path = tmp_path / "old.pt"
-    torch.save(old, path)
-    loaded = network(str(path)).state_dict()
-    for key, value in old.items():
-        torch.testing.assert_close(loaded[key], value)
-
-
-def test_weights_missing_more_than_the_projection_are_refused(weights, tmp_path):
+def test_weights_saved_with_the_retired_projection_load_and_play_the_same(weights, tmp_path):
     saved = torch.load(weights)
-    del saved["stem.own.weight"]
+    saved["projection.0.weight"] = torch.zeros(CHANNELS, CHANNELS, 1)
+    saved["projection_head.2.bias"] = torch.zeros(CHANNELS)
+    path = tmp_path / "older.pt"
+    torch.save(saved, path)
+    loaded = network(str(path)).state_dict()
+    assert loaded.keys() == network(weights).state_dict().keys()
+    for key, value in loaded.items():
+        torch.testing.assert_close(value, saved[key])
+
+
+@pytest.mark.parametrize("change", ["missing", "unexpected"])
+def test_weights_that_dont_fit_are_refused(weights, tmp_path, change):
+    saved = torch.load(weights)
+    if change == "missing":
+        del saved["stem.own.weight"]
+    else:
+        saved["encoder_out.weight"] = torch.zeros(6, CHANNELS)  # a network with chance codes
     path = tmp_path / "broken.pt"
     torch.save(saved, path)
     with pytest.raises(RuntimeError, match="don't fit"):
         network(str(path))
-
-
-def test_weights_with_codes_load_with_them_and_play_through_chance_nodes(tmp_path):
-    torch.manual_seed(0)
-    saved = network(codes=6)
-    path = tmp_path / "chance.pt"
-    torch.save(saved.state_dict(), path)
-    loaded = network(str(path))
-    assert loaded.codes == 6
-    for key, value in saved.state_dict().items():
-        torch.testing.assert_close(loaded.state_dict()[key], value)
-    _, searcher = player(str(path))
-    assert isinstance(searcher.model, StochasticNetModel)

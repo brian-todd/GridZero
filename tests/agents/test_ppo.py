@@ -1,4 +1,5 @@
 import dataclasses
+import time
 
 import numpy as np
 import pytest
@@ -239,6 +240,34 @@ def test_self_play_checks_its_counts(not_an_integer):
         self_play(net(), GAME, workers=0)
     with pytest.raises(ValueError, match="seed"):
         self_play(net(), GAME, seed=-1)
+
+
+def test_a_time_box_with_no_room_still_runs_the_first_iteration_and_no_more():
+    settings = PPO(games=2, epochs=1, batch_size=128)
+    run = self_play(net(), GAME, settings, iterations=50, seed=3, seconds=0.0)
+    assert [i.iteration for i in run] == [1]
+
+
+def test_a_roomy_time_box_runs_every_iteration():
+    settings = PPO(games=2, epochs=1, batch_size=128)
+    run = self_play(net(), GAME, settings, iterations=3, seed=3, seconds=3600.0)
+    assert [i.iteration for i in run] == [1, 2, 3]
+
+
+def test_no_iteration_starts_that_would_end_past_the_time_box_at_the_last_ones_pace():
+    settings = PPO(games=2, epochs=1, batch_size=128)
+    done = []
+    for i in self_play(net(), GAME, settings, iterations=50, seed=3, seconds=1.0):
+        done.append(i.iteration)
+        time.sleep(0.6)  # the caller's work counts: 0.6 s are left, and the last took more
+    assert done == [1]
+
+
+def test_self_play_checks_its_time_box():
+    with pytest.raises(ValueError, match="seconds"):
+        self_play(net(), GAME, seconds=-1.0)
+    with pytest.raises(TypeError, match="seconds"):
+        self_play(net(), GAME, seconds="60")  # ty: ignore[invalid-argument-type]  # a string on purpose
 
 
 def two_decisions(seed=7):

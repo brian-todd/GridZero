@@ -36,15 +36,35 @@ class UnitStats:
         May defer its attack onto a tile instead of attacking. Archers have it.
     double_move : bool, default False
         Moves twice ``move`` in a turn when it doesn't attack, and can't attack once it has
-        moved more than ``move``. Knights have it.
+        moved more than ``move``. No default kind has it.
     aura : bool, default False
         Gives friendly units within ``Tactics.aura_radius``, itself included,
         ``Tactics.aura_bonus`` Atk and Def. Auras don't stack. Captains have it.
+    builds : bool, default False
+        May spend its attack on building or breaking an adjacent tile. Engineers have it.
+    charge : int, default 0
+        Atk added, before flanking multiplies it, to an attack made after moving at least ``move``
+        tiles this round, at least 0. A charge. Knights have it.
+    braces : bool, default False
+        When a friendly unit with `formation` stands adjacent and it isn't engaged (see
+        ``Tactics.engaged_until_turn``), units that charge can't flank it from any side, and
+        their charge is stopped: the charger loses its bonus and is struck first, by this unit's
+        Atk, unflanked. Others flank it as usual. Footsoldiers have it.
+    places : int, default 1
+        How many of a team's ``Tactics.team_size`` places the first unit of this kind takes, at
+        least 1.
+    extra_places : int, default 0
+        How many more places each further unit of this kind takes than the one before, at least
+        0. Knights have 1: a second knight takes 2 places.
+    sight : float, default 3.0
+        How far it sees under fog (``Tactics.fog``), between centers, around walls as its line of
+        fire goes, positive. Knights see 5 and archers 4: scouts, and eyes for their own range.
 
     Raises
     ------
     TypeError
-        If a number is not an integer (``reach``: a real number), or a flag not a bool.
+        If a number is not an integer (``reach`` and ``sight``: real numbers), or a flag not a
+        bool.
     ValueError
         If a number is out of range.
     """
@@ -59,6 +79,12 @@ class UnitStats:
     defers: bool = False
     double_move: bool = False
     aura: bool = False
+    builds: bool = False
+    charge: int = 0
+    braces: bool = False
+    places: int = 1
+    extra_places: int = 0
+    sight: float = 3.0
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str):
@@ -67,21 +93,99 @@ class UnitStats:
         check_int(self.atk, "atk", minimum=0)
         check_int(self.defense, "defense", minimum=0)
         check_int(self.move, "move", minimum=0)
+        check_int(self.charge, "charge", minimum=0)
+        check_int(self.places, "places", minimum=1)
+        check_int(self.extra_places, "extra_places", minimum=0)
         if check_real(self.reach, "reach") <= 0:
             raise ValueError(f"reach must be positive, got {self.reach}")
-        for flag in ("formation", "defers", "double_move", "aura"):
+        if check_real(self.sight, "sight") <= 0:
+            raise ValueError(f"sight must be positive, got {self.sight}")
+        for flag in ("formation", "defers", "double_move", "aura", "builds", "braces"):
             if not isinstance(getattr(self, flag), bool):
                 raise TypeError(f"{flag} must be a bool, got {getattr(self, flag)!r}")
 
+    def places_for(self, count: int) -> int:
+        """Return the places that ``count`` units of this kind take together.
 
-FOOTSOLDIER = UnitStats("footsoldier", hp=5, atk=4, defense=2, move=2, reach=1, formation=True)
-ARCHER = UnitStats("archer", hp=3, atk=2, defense=1, move=2, reach=3, defers=True)
-KNIGHT = UnitStats("knight", hp=7, atk=3, defense=2, move=3, reach=1, double_move=True)
+        Parameters
+        ----------
+        count : int
+            How many, at least 0.
+
+        Returns
+        -------
+        int
+            ``count * places + extra_places * count * (count - 1) // 2``.
+        """
+        return count * self.places + self.extra_places * count * (count - 1) // 2
+
+
+FOOTSOLDIER = UnitStats(
+    "footsoldier", hp=5, atk=4, defense=2, move=2, reach=1, formation=True, braces=True
+)
+ARCHER = UnitStats("archer", hp=3, atk=2, defense=1, move=2, reach=3, defers=True, sight=4)
+KNIGHT = UnitStats(
+    "knight", hp=7, atk=2, defense=2, move=3, reach=1, charge=2, extra_places=1, sight=5
+)
 CAPTAIN = UnitStats("captain", hp=9, atk=4, defense=3, move=2, reach=1, aura=True)
-DEFAULT_UNITS = (FOOTSOLDIER, ARCHER, KNIGHT, CAPTAIN)
-"""The four kinds of the first rules, in the order of their kind numbers 0 to 3."""
-DEFAULT_COUNTS = (6, 3, 2, 1)
-"""How many units of each kind of `DEFAULT_UNITS` each side has: 12 in all."""
+ENGINEER = UnitStats("engineer", hp=3, atk=2, defense=1, move=2, reach=3, builds=True)
+DEFAULT_UNITS = (FOOTSOLDIER, ARCHER, KNIGHT, CAPTAIN, ENGINEER)
+"""The kinds of the default rules, in the order of their kind numbers 0 to 4."""
+DEFAULT_CAPS = (6, 3, 2, 1, 1)
+"""The most units of each kind of `DEFAULT_UNITS` a side may field."""
+
+
+def default_roster(
+    caps: tuple[int, ...], team_size: int, units: tuple[UnitStats, ...] | None = None
+) -> tuple[int, ...]:
+    """Return a team that fields every kind it can, then follows the caps.
+
+    One of each kind with a cap, in order while it fits, then one unit at a time to the kind
+    with the most of its spare cap per unit already added (``spare / (added + 1)``, ties to the
+    lower kind), among the kinds whose next unit still fits. With caps of 6/3/2/1/1 and a team
+    of 8 that is 3/2/1/1/1.
+
+    Parameters
+    ----------
+    caps : tuple of int
+        The most of each kind a side may field, per kind.
+    team_size : int
+        How many places to fill, at most what the caps can field.
+    units : tuple of UnitStats, optional
+        The kinds, for the places their units take (`UnitStats.places_for`); a place a unit
+        by default.
+
+    Returns
+    -------
+    tuple of int
+        How many of each kind, each within its cap, taking at most ``team_size`` places: all of
+        them unless no kind fits in what is left.
+    """
+
+    def next_places(kind: int, have: int) -> int:
+        if units is None:
+            return 1
+        return units[kind].places_for(have + 1) - units[kind].places_for(have)
+
+    roster = [0] * len(caps)
+    left = team_size
+    for kind, cap in enumerate(caps):
+        if cap > 0 and next_places(kind, 0) <= left:
+            roster[kind] = 1
+            left -= next_places(kind, 0)
+    spare = [cap - have for cap, have in zip(caps, roster, strict=True)]
+    added = [0] * len(caps)
+    while True:
+        fits = [
+            k
+            for k in range(len(caps))
+            if added[k] < spare[k] and next_places(k, roster[k] + added[k]) <= left
+        ]
+        if not fits:
+            return tuple(have + more for have, more in zip(roster, added, strict=True))
+        kind = max(fits, key=lambda k: (spare[k] / (added[k] + 1), -k))
+        left -= next_places(kind, roster[kind] + added[kind])
+        added[kind] += 1
 
 
 def roll_needed(atk: int, defense: int, base: int = 8, step: int = 2) -> int:

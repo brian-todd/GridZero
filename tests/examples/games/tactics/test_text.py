@@ -38,20 +38,22 @@ def test_where_writes_axial_coordinates(at):
 def test_a_summary_reads_its_counts_and_has_a_row_per_kind():
     records = series(TINY, [("a", RandomPlayer()), ("b", RandomPlayer())], 1, seed=4)
     summary = summarize(TINY, records)
-    first, blank, header, rule, *rows = summary_text(TINY, summary).splitlines()
+    first, endings, blank, header, rule, *rows = summary_text(TINY, summary).splitlines()
+    assert endings.startswith("Ended by: killed ")
     counts = summary.tally
     assert first.startswith(f"2 games: wins {counts.wins}, draws {counts.draws}, by team ")
     assert first.endswith(f"{summary.rounds:.1f} rounds and {counts.plies:.0f} decisions a game.")
     assert (blank, header, rule) == (
         "",
-        "| Kind | Damage dealt | Damage taken | Kills | Losses |",
-        "|---|---|---|---|---|",
+        "| Kind | Placed | Damage dealt | Damage taken | Kills | Losses |",
+        "|---|---|---|---|---|---|",
     )
     assert len(rows) == len(TINY.units)
     for k, (row, stats) in enumerate(zip(rows, TINY.units, strict=True)):
         cells = [c.strip() for c in row.strip("|").split("|")]
         assert cells == [
             stats.name,
+            str(summary.placed[k]),
             str(summary.damage_dealt[k]),
             str(summary.damage_taken[k]),
             str(summary.kills[k]),

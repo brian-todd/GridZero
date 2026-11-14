@@ -1,12 +1,13 @@
 """A search player: open-loop Monte Carlo tree search over plans for whole unit turns.
 
 A unit's turn is several decisions (move, attack, turn, end), and a move has dozens of tiles,
-so the search chooses between a few **plans** for a whole turn instead: a tile to move to, and
-whether to attack before moving or after. The greedy player's scores give the candidates and
+so the search chooses between a few **plans** for a whole turn instead: a tile to move to,
+whether to attack before moving or after, and for a unit that builds, a tile to work on instead of
+attacking. The greedy player's scores give the candidates and
 their priors, and its choices fill in the rest of a turn (which target, where to defer, which
 way to face). Both sides plan the same way inside the search.
 
-Chance (the d20 of each attack, and the shuffled order of turns each round) is sampled, not
+Chance (the d20 of each attack, and the order of turns when it is rolled) is sampled, not
 enumerated: every simulation plays from the root with a fresh seed drawn from the player's own
 generator, so the search never reads the game's seed, which fixes every future roll. Nodes are
 keyed by the plans chosen to reach them (open loop), so one node gathers many outcomes, and a
@@ -35,6 +36,21 @@ class Plan(NamedTuple):
     """The cell to move to; the unit's own to stay."""
     attack_first: bool
     """Attack from where it stands before moving, rather than after."""
+    work: Action | None = None
+    """Work on a tile after moving, in place of attacking; skipped if no longer legal."""
+
+
+class Judgment(NamedTuple):
+    """What a search made of a unit's turn."""
+
+    plans: tuple[Plan, ...]
+    """The plans tried at the root."""
+    visits: tuple[int, ...]
+    """The simulations through each."""
+    values: tuple[float, ...]
+    """Team 0's mean value through each, in [0, 1]."""
+    value: float
+    """Team 0's mean value over every simulation, in [0, 1]."""
 
 
 @dataclass(frozen=True)
@@ -46,7 +62,7 @@ class SearchPlayer:
     value, plus a bonus for plans the greedy scores favor and few visits), plays each chosen
     plan out to the end of its unit's turn, and stops after ``depth`` unit turns, at the end of
     the game, or at a plan not tried before. It then plays ``rollout_turns`` unit turns more as
-    the greedy player, and scores the position by material (see `material`). The plan tried
+    the greedy player, and scores the position by its standing (see `standing`). The plan tried
     most at the root is played, one action at a time, over the turn. Deployment is the greedy
     player's.
 
@@ -56,6 +72,10 @@ class SearchPlayer:
         Simulations per unit's turn, at least 1.
     plans : int, default 8
         Candidate plans per turn, at least 1: the best by the greedy's scores.
+    work_plans : int, default 4
+        Further candidates for a unit that builds, at least 0: changes to the terrain around the
+        tiles it scores best. They have a place of their own because a change rarely scores above
+        0 by the greedy's reckoning, however much it would matter.
     depth : int, default 4
         Unit turns a simulation plays before scoring, the root's included, at least 1.
     exploration : float, default 0.3
@@ -64,6 +84,8 @@ class SearchPlayer:
         Softness of the priors, a softmax of the plans' scores divided by it; positive.
     rollout_turns : int, default 16
         Unit turns the greedy player plays after the last plan, before scoring.
+    hold_weight : float, default 0.25
+        Share of a position's value that is the point's clock rather than material, in [0, 1].
     greedy : GreedyPlayer, default GreedyPlayer()
         Scores the plans, fills in each turn, deploys, and plays the rollouts.
 
@@ -75,10 +97,12 @@ class SearchPlayer:
 
     simulations: int = 100
     plans: int = 8
+    work_plans: int = 4
     depth: int = 4
     exploration: float = 0.3
     temperature: float = 1.0
     rollout_turns: int = 16
+    hold_weight: float = 0.25
     greedy: GreedyPlayer = field(default_factory=GreedyPlayer)
     _chosen: dict[tuple[int, int, int], Plan] = field(
         default_factory=dict, init=False, repr=False, compare=False
@@ -88,9 +112,11 @@ class SearchPlayer:
     def __post_init__(self) -> None:
         check_int(self.simulations, "simulations", minimum=1)
         check_int(self.plans, "plans", minimum=1)
+        check_int(self.work_plans, "work_plans", minimum=0)
         check_int(self.depth, "depth", minimum=1)
         check_int(self.rollout_turns, "rollout_turns", minimum=0)
         check_real(self.exploration, "exploration", 0.0)
+        check_real(self.hold_weight, "hold_weight", 0.0, 1.0)
         if not check_real(self.temperature, "temperature") > 0:
             raise ValueError(f"temperature must be positive, got {self.temperature}")
         if not isinstance(self.greedy, GreedyPlayer):
@@ -105,14 +131,49 @@ class SearchPlayer:
         rng: np.random.Generator,
     ) -> Action:
         """Return the next action of this turn's plan, searching for one first."""
+        return self.decide(game, player, position, legal, rng)[0]
+
+    def decide(
+        self,
+        game: Tactics,
+        player: int,
+        position: TacticsPosition,
+        legal: NDArray[np.bool_],
+        rng: np.random.Generator,
+    ) -> tuple[Action, Judgment | None]:
+        """Return what the player does, and what its search made of the turn if it searched here.
+
+        Parameters
+        ----------
+        game : Tactics
+            The rules.
+        player : int
+            The player it is.
+        position : TacticsPosition
+            The position.
+        legal : ndarray of bool, shape (n_verbs, n_cells)
+            ``game.legal(position)``.
+        rng : numpy.random.Generator
+            The source of every seed and tie.
+
+        Returns
+        -------
+        action : Action
+            The action.
+        judgment : Judgment or None
+            The search's, at the first decision of a unit's turn with a choice in it; None when
+            this decision followed a plan already chosen, was deployment, or had one legal action.
+        """
         if position.deploying or np.count_nonzero(legal) == 1:
-            return self.greedy(game, player, position, legal, rng)
+            return self.greedy(game, player, position, legal, rng), None
         a = game.active(position)
         key = (position.seed, position.round, int(position.state.units.uid[a]))
+        judgment = None
         if key not in self._chosen:
             self._chosen.clear()
-            self._chosen[key] = self.search(game, position, rng)
-        return self._next(game, position, legal, self._chosen[key], rng)
+            judgment = self.judge(game, position, rng)
+            self._chosen[key] = self._pick(judgment, rng)
+        return self._next(game, position, legal, self._chosen[key], rng), judgment
 
     def search(self, game: Tactics, position: TacticsPosition, rng: np.random.Generator) -> Plan:
         """Return the plan the search prefers for the acting unit's turn.
@@ -136,6 +197,30 @@ class SearchPlayer:
         ValueError
             If the game is over or still in deployment.
         """
+        return self._pick(self.judge(game, position, rng), rng)
+
+    def judge(self, game: Tactics, position: TacticsPosition, rng: np.random.Generator) -> Judgment:
+        """Return what the search makes of the acting unit's turn.
+
+        Parameters
+        ----------
+        game : Tactics
+            The rules.
+        position : TacticsPosition
+            A position in battle, not over.
+        rng : numpy.random.Generator
+            The source of every seed and tie the search draws.
+
+        Returns
+        -------
+        Judgment
+            The plans tried at the root, their visits and values, and the root's value.
+
+        Raises
+        ------
+        ValueError
+            If the game is over or still in deployment.
+        """
         if position.over or position.deploying:
             raise ValueError("search needs a position in battle, not over")
         root = _Node()
@@ -143,9 +228,18 @@ class SearchPlayer:
             sampled = replace(position, seed=int(rng.integers(2**63)))
             self._simulate(game, root, sampled, rng)
         uid = int(position.state.units.uid[game.active(position)])
-        tried = [(plan, child.n) for (who, plan), child in root.children.items() if who == uid]
-        most = max(n for _, n in tried)
-        best = [plan for plan, n in tried if n == most]
+        tried = [(plan, child) for (who, plan), child in root.children.items() if who == uid]
+        return Judgment(
+            tuple(plan for plan, _ in tried),
+            tuple(child.n for _, child in tried),
+            tuple(child.w / child.n for _, child in tried),
+            root.w / root.n,
+        )
+
+    def _pick(self, judgment: Judgment, rng: np.random.Generator) -> Plan:
+        """Return the plan tried most; of plans tried equally, one drawn at random."""
+        most = max(judgment.visits)
+        best = [p for p, n in zip(judgment.plans, judgment.visits, strict=True) if n == most]
         return best[int(rng.integers(len(best)))]
 
     def candidates(
@@ -159,7 +253,8 @@ class SearchPlayer:
 
         A plan to move to a tile scores as the greedy player scores the tile, plus the value
         of the best attack from it. A plan to attack first scores the best attack from where
-        the unit stands plus the tile. Once the unit has moved, its only tile is its own.
+        the unit stands plus the tile. Once the unit has moved, its only tile is its own. A unit
+        that builds also gets `work_plans`, in random order, after the others.
 
         Parameters
         ----------
@@ -177,7 +272,8 @@ class SearchPlayer:
         Returns
         -------
         list of (Plan, float)
-            At most ``plans`` plans, in decreasing score, ties in random order.
+            At most ``plans`` plans, in decreasing score, ties in random order, then any plans
+            to work.
         """
         a = game.active(position)
         u = position.state.units
@@ -190,15 +286,46 @@ class SearchPlayer:
             for c, s, t in zip(cells, score, attacks, strict=True)
         ]
         if legal[Verb.ATTACK].any():
-            now, _ = self.greedy._best_attack(
-                game, position, a, a, np.flatnonzero(legal[Verb.ATTACK])
-            )
+            now, _ = self.greedy._best_attack(game, position, a, a, legal[Verb.ATTACK].nonzero()[0])
             scored += [
                 (Plan(int(c), True), float(s + now))
                 for c, s in zip(cells, score, strict=True)
                 if c != a  # attacking, then staying, is the plan to stay
             ]
-        return self._best(scored, rng)
+        best = self._best(scored, rng)
+        if game.units[u.kind[a]].builds and self.work_plans and not u.attacked[a]:
+            best += self._work_plans(position, cells, score, rng)
+        return best
+
+    def _work_plans(
+        self,
+        position: TacticsPosition,
+        cells: NDArray[np.intp],
+        score: NDArray[np.float64],
+        rng: np.random.Generator,
+    ) -> list[tuple[Plan, float]]:
+        """Return up to ``work_plans`` plans to change a tile around the unit's two best tiles.
+
+        Each scores as its tile does. The tiles it may turn out to work on are those next to where
+        it would stand; whether a change is legal is left until then (`_next`).
+        """
+        state = position.state
+        space = state.space
+        near = space.radius_graph(1.0)
+        scored = []
+        for i in np.argsort(-score, kind="stable")[:2]:
+            tile = int(cells[i])
+            around = near.indices[near.indptr[tile] : near.indptr[tile + 1]]
+            for target in around[~state.occupied[around] & ~state.point[around]]:
+                cell = int(target)
+                if not state.wall[cell]:
+                    work = Action(Verb.BUILD, cell)
+                    scored.append((Plan(tile, False, work), float(score[i])))
+                if not state.passable[cell]:
+                    work = Action(Verb.BREAK, cell)
+                    scored.append((Plan(tile, False, work), float(score[i])))
+        shuffled = [scored[k] for k in rng.permutation(len(scored))]
+        return shuffled[: self.work_plans]
 
     def _best(
         self, scored: list[tuple[Plan, float]], rng: np.random.Generator
@@ -290,33 +417,38 @@ class SearchPlayer:
     ) -> Action:
         """Return the next action of ``plan`` from where the turn stands.
 
-        Attack first if the plan says so and an attack is legal, then move to its tile if that
-        is still legal and the unit hasn't moved, then attack if it can, then defer, turn and
-        end as the greedy player does. A step the dice made impossible is skipped.
+        A plan with work moves to its tile, then works. Otherwise attack first if the plan says so
+        and an attack is legal, then move to its tile if that is still legal and the unit hasn't
+        moved, then attack if it can. Then defer, turn and end as the greedy player does. A step
+        the dice made impossible is skipped.
         """
         a = game.active(position)
         u = position.state.units
+        if plan.work is not None:
+            if plan.tile != a and u.moved[a] == 0 and legal[Verb.MOVE, plan.tile]:
+                return Action(Verb.MOVE, plan.tile)
+            if legal[plan.work.verb, plan.work.cell]:
+                return plan.work
         if legal[Verb.ATTACK].any() and (plan.attack_first or plan.tile == a or u.moved[a]):
             return self._attack(game, position, legal, a)
         if plan.tile != a and u.moved[a] == 0 and legal[Verb.MOVE, plan.tile]:
             return Action(Verb.MOVE, plan.tile)
         if legal[Verb.ATTACK].any():
             return self._attack(game, position, legal, a)
-        return self.greedy._wrap_up(game, position, legal, rng)
+        _, work = self.greedy._best_work(game, position, legal, a)
+        return self.greedy._wrap_up(game, position, legal, work, rng)
 
     def _attack(
         self, game: Tactics, position: TacticsPosition, legal: NDArray[np.bool_], a: int
     ) -> Action:
         """Return the greedy's best attack among the legal ones."""
-        _, target = self.greedy._best_attack(
-            game, position, a, a, np.flatnonzero(legal[Verb.ATTACK])
-        )
+        _, target = self.greedy._best_attack(game, position, a, a, legal[Verb.ATTACK].nonzero()[0])
         return Action(Verb.ATTACK, target)
 
     def _evaluate(
         self, game: Tactics, position: TacticsPosition, rng: np.random.Generator
     ) -> float:
-        """Return team 0's value of a position: its result, or material after the rollout."""
+        """Return team 0's value of a position: its result, or its standing after the rollout."""
         ended = 0
         while not position.over and ended < self.rollout_turns:
             legal = game.legal(position)
@@ -325,7 +457,33 @@ class SearchPlayer:
             ended += action.verb == Verb.END
         if position.over:
             return 0.5 if position.winner is None else float(position.winner == 0)
-        return material(game, position)
+        return standing(game, position, self.hold_weight)
+
+
+def standing(game: Tactics, position: TacticsPosition, hold_weight: float) -> float:
+    """Return team 0's value of a position still going: material, and how near a side is to winning.
+
+    Parameters
+    ----------
+    game : Tactics
+        The rules.
+    position : TacticsPosition
+        A position in battle.
+    hold_weight : float
+        Share of the value given to the point, in [0, 1].
+
+    Returns
+    -------
+    float
+        ``(1 - hold_weight) * material + hold_weight * clock``, in [0, 1], where ``clock`` runs
+        from 0.5, with no owner, to 1 as team 0 nears ``hold_rounds``, or to 0 as team 1 does.
+    """
+    owner, clock = position.hold
+    progress = 0.5
+    if owner >= 0:
+        share = 0.5 * min(1.0, clock / game.hold_rounds)
+        progress += share if owner == 0 else -share
+    return (1.0 - hold_weight) * material(game, position) + hold_weight * progress
 
 
 def material(game: Tactics, position: TacticsPosition) -> float:
@@ -347,7 +505,7 @@ def material(game: Tactics, position: TacticsPosition) -> float:
         ``m0 / (m0 + m1)``, 0.5 when both sides have the same, or when neither has any.
     """
     u = position.state.units
-    cells = np.flatnonzero(position.state.occupied)
+    cells = position.state.occupied.nonzero()[0]
     worth = np.array([game.units[k].hp + game.units[k].atk for k in range(len(game.units))])
     full = np.array([game.units[k].hp for k in range(len(game.units))])
     kind = u.kind[cells]

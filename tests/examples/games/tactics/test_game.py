@@ -1,10 +1,13 @@
 import dataclasses
+import itertools
 
 import numpy as np
 import pytest
 
 from examples.games.tactics import (
+    Attacked,
     GameOver,
+    Hold,
     RandomPlayer,
     Tactics,
     TacticsPosition,
@@ -12,11 +15,14 @@ from examples.games.tactics import (
     board_space,
     units,
 )
+from examples.games.tactics.state import NOBODY
 from game_demo import check_game
 from gridzero.core import path
 from tactics_demo import ARCHER, CAPTAIN, FOOT, KNIGHT, SMALL, TINY, mirrored, piece, play_random
 
 PLACE = Verb.PLACE
+WATCHFUL = Tactics(shape=(9, 9), home_depth=4)
+TINY_PICKED = dataclasses.replace(TINY, caps=(3, 2, 2, 2), team_size=4)
 
 
 def cells_of(mask):
@@ -73,28 +79,35 @@ def test_rules_are_a_hashable_value_and_replace_makes_new_rules():
     assert hash(Tactics()) == hash(Tactics())
     harder = dataclasses.replace(Tactics(), flank_factor=4)
     assert harder != Tactics()
-    assert harder.n_verbs == Verb.PLACE + 4
-    assert harder.team_size == 12
+    assert harder.n_verbs == Verb.PLACE + 5
+    assert harder.team_size == 8
 
 
 def test_rules_reject_inconsistent_parameters():
-    with pytest.raises(ValueError, match="counts"):
-        Tactics(counts=(1, 2))
+    with pytest.raises(ValueError, match="caps"):
+        Tactics(caps=(1, 2))
+    with pytest.raises(TypeError, match="caps"):
+        Tactics(caps=[6, 3, 2, 1, 1])  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError, match="fill a team"):
+        Tactics(caps=(1, 1, 1, 1, 0), team_size=6)
     with pytest.raises(ValueError, match="hold"):
-        Tactics(home_depth=3)  # 9 tiles for 12 units
+        Tactics(home_depth=2)  # 4 tiles for 8 units
     with pytest.raises(TypeError, match="free_facing"):
         Tactics(free_facing=1)  # ty: ignore[invalid-argument-type]
-    with pytest.raises(TypeError, match="decide_at_cap"):
-        Tactics(decide_at_cap=1)  # ty: ignore[invalid-argument-type]
     with pytest.raises(ValueError, match="flank_factor"):
         Tactics(flank_factor=0)
     with pytest.raises(TypeError, match="UnitStats"):
-        Tactics(units=("archer",), counts=(1,))  # ty: ignore[invalid-argument-type]
+        Tactics(units=("archer",), caps=(1,))  # ty: ignore[invalid-argument-type]
 
 
-def test_rules_reject_counts_that_are_not_integers(not_an_integer):
-    with pytest.raises(TypeError, match="count"):
-        Tactics(counts=(6, 3, 2, not_an_integer))
+def test_rules_reject_caps_that_are_not_integers(not_an_integer):
+    with pytest.raises(TypeError, match="cap"):
+        Tactics(caps=(6, 3, 2, 1, not_an_integer))
+
+
+def test_rules_reject_a_team_size_that_is_not_an_integer(not_an_integer):
+    with pytest.raises(TypeError, match="team_size"):
+        Tactics(team_size=not_an_integer)
 
 
 # Deployment.
@@ -113,7 +126,7 @@ def test_start_starts_deployment_with_team_zero_on_its_home():
         assert cells_of(legal[PLACE + kind]) == home
 
 
-def test_deployment_alternates_and_each_side_deploys_its_counts():
+def test_deployment_alternates_and_each_side_fills_its_team():
     position = TINY.start(1)
     players = []
     while position.deploying:
@@ -125,11 +138,61 @@ def test_deployment_alternates_and_each_side_deploys_its_counts():
     listed = units(position.state)
     for team in (0, 1):
         kinds = np.bincount(listed.kind[listed.team == team], minlength=4)
-        np.testing.assert_array_equal(kinds, TINY.counts)
+        np.testing.assert_array_equal(kinds, TINY.caps)
         assert (position.state.home[listed.cell[listed.team == team]] == team).all()
 
 
-def test_a_kind_is_no_longer_offered_once_its_count_is_deployed():
+def rosters(caps, team_size, units):
+    """Every way to fill a team's places under the caps."""
+    choices = itertools.product(*(range(cap + 1) for cap in caps))
+    return [
+        roster
+        for roster in choices
+        if sum(s.places_for(n) for s, n in zip(units, roster, strict=True)) == team_size
+    ]
+
+
+def deploy(game, first, second):
+    """Deploy two rosters, each kind in order, and return the position that follows."""
+    position = game.start(1)
+    orders = [[k for k, n in enumerate(roster) for _ in range(n)] for roster in (first, second)]
+    while position.deploying:
+        team = game.player(position)
+        verb = PLACE + orders[team].pop(0)
+        position = game.step(position, (verb, int(np.flatnonzero(game.legal(position)[verb])[0])))
+    return position
+
+
+def test_every_roster_under_the_caps_fills_a_team_exactly():
+    game = Tactics()
+    every = rosters(game.caps, game.team_size, game.units)
+    assert len(every) == 43  # as many as when a second knight took one place, by chance
+    for roster in every:
+        position = deploy(game, roster, every[0])
+        assert position.round == 1
+        listed = units(position.state)
+        assert len(listed) == sum(roster) + sum(every[0])
+        kinds = np.bincount(listed.kind[listed.team == 0], minlength=len(game.caps))
+        assert tuple(kinds) == roster
+
+
+def test_caps_hold_for_each_side_on_its_own():
+    game = Tactics()
+    position = game.start(1)
+    captain = PLACE + 3
+    position = game.step(position, (captain, int(np.flatnonzero(game.legal(position)[captain])[0])))
+    assert game.legal(position)[captain].any()  # team 0's captain leaves team 1's free
+    position = game.step(position, (captain, int(np.flatnonzero(game.legal(position)[captain])[0])))
+    assert not game.legal(position)[captain].any()  # team 0 has had its one
+
+
+def test_deployment_stops_at_the_team_size_with_caps_left_over():
+    position = deploy(TINY_PICKED, (2, 1, 1, 0), (0, 1, 1, 2))
+    assert (position.deploying, position.round) == (False, 1)
+    assert position.state.occupied.sum() == 8
+
+
+def test_a_kind_is_no_longer_offered_once_its_cap_is_deployed():
     position = TINY.start(1)
     position = take(
         TINY,
@@ -560,43 +623,196 @@ def test_a_new_round_resets_the_rounds_flags_and_reshuffles(make_battle, at):
     assert sorted(u.initiative[occupied].tolist()) == [0, 1]
 
 
-def test_the_game_is_a_draw_after_the_last_round(make_battle, at):
-    game = dataclasses.replace(SMALL, max_rounds=1)
-    position = make_battle([piece(4, 4, FOOT, 0), piece(6, 4, FOOT, 1)], game=game)
-    position = take(game, position, Verb.END, at(4, 4))
-    position = take(game, position, Verb.END, at(6, 4))
-    assert position.over
-    assert position.winner is None
-    assert position.round == 1
+# Overwatch.
 
 
-@pytest.mark.parametrize(("hp", "winner"), [((5, 4), 0), ((2, 3), 1), ((4, 4), None)])
-def test_at_the_cap_the_side_with_more_hit_points_left_wins(make_battle, at, hp, winner):
-    game = dataclasses.replace(SMALL, max_rounds=1, decide_at_cap=True)
-    pieces = [
-        piece(1, 1, FOOT, 0, hp=hp[0]),
-        piece(4, 4, ARCHER, 1, hp=1),
-        piece(6, 6, FOOT, 1, hp=hp[1] - 1),
-    ]
+@pytest.mark.parametrize(
+    ("pieces", "atk", "flank"),
+    [
+        ([piece(4, 2, ARCHER, 0), piece(4, 5, FOOT, 1, facing=5)], 3, False),  # in front: 2 + 1
+        ([piece(4, 2, ARCHER, 0), piece(4, 5, FOOT, 1, facing=2)], 7, True),  # behind: 2 x 3 + 1
+        (
+            [piece(4, 2, ARCHER, 0), piece(3, 2, CAPTAIN, 0), piece(4, 5, FOOT, 1, facing=5)],
+            4,  # with an aura, in front: 2 + 1 + 1
+            False,
+        ),
+        (
+            [piece(4, 2, ARCHER, 0), piece(3, 2, CAPTAIN, 0), piece(4, 5, FOOT, 1, facing=2)],
+            10,  # with an aura, behind: (2 + 1) x 3 + 1
+            True,
+        ),
+    ],
+    ids=["front", "behind", "aura front", "aura behind"],
+)
+def test_a_deferred_attack_gets_its_bonus_after_flanking_multiplies(
+    make_battle, at, pieces, atk, flank
+):
+    game = WATCHFUL
     position = make_battle(pieces, game=game)
-    for q, r in ((1, 1), (4, 4), (6, 6)):
-        position = take(game, position, Verb.END, at(q, r))
-    assert position.over
-    assert position.winner == winner
-    assert position.events[-1] == GameOver(winner)
+    deferred = game.odds(position, at(4, 2), at(4, 5), deferred=True)
+    assert (deferred.atk, deferred.flank) == (atk, flank)
+    assert game.odds(position, at(4, 2), at(4, 5)).flank == flank
 
 
-def test_without_deciding_at_the_cap_more_hit_points_still_draw(make_battle, at):
-    game = dataclasses.replace(SMALL, max_rounds=1, decide_at_cap=False)
-    position = make_battle([piece(4, 4, FOOT, 0, hp=5), piece(6, 4, FOOT, 1, hp=1)], game=game)
-    position = take(game, position, Verb.END, at(4, 4))
-    position = take(game, position, Verb.END, at(6, 4))
-    assert position.over
-    assert position.winner is None
+def test_a_sprung_attack_rolls_and_deals_the_bonus(make_battle, at):
+    game = WATCHFUL
+    pieces = [piece(4, 6, FOOT, 1, facing=2), piece(4, 3, ARCHER, 0, watch=at(4, 5))]
+    for seed in range(50):
+        position = game.step(make_battle(pieces, game=game, seed=seed), (Verb.MOVE, at(4, 5)))
+        shot = next(e for e in position.events if isinstance(e, Attacked))
+        assert (shot.deferred, shot.flank, shot.atk) == (True, False, 3)  # 2 + 1, in front
+        if shot.hit:
+            assert shot.damage == min(shot.atk, 5)
+            return
+    raise AssertionError("no arrow hit in 50 tries")
 
 
-def test_the_default_rules_decide_at_the_cap():
-    assert Tactics().decide_at_cap
+def test_an_ordinary_attack_gets_no_overwatch_bonus(make_battle, at):
+    game = dataclasses.replace(WATCHFUL, overwatch_bonus=5)
+    pieces = [piece(4, 2, ARCHER, 0), piece(4, 4, FOOT, 1, facing=5)]
+    position = game.step(make_battle(pieces, game=game), (Verb.ATTACK, at(4, 4)))
+    shot = next(e for e in position.events if isinstance(e, Attacked))
+    assert (shot.deferred, shot.atk) == (False, 2)
+
+
+def test_rules_reject_an_overwatch_bonus_that_is_not_a_natural_number(not_an_integer):
+    with pytest.raises(TypeError, match="overwatch_bonus"):
+        Tactics(overwatch_bonus=not_an_integer)
+    with pytest.raises(ValueError, match="overwatch_bonus"):
+        Tactics(overwatch_bonus=-1)
+
+
+# The point (`objective`).
+
+
+def end_round(game, position):
+    """End every unit's turn until the round is over."""
+    start = position.round
+    while not position.over and position.round == start:
+        position = take(game, position, Verb.END, game.active(position))
+    return position
+
+
+@pytest.mark.parametrize("team", [0, 1])
+def test_a_unit_on_the_point_at_a_rounds_end_captures_it(make_battle, team):
+    position = make_battle([piece(4, 4, FOOT, team), piece(1, 1, FOOT, 1 - team)], point=(4, 4))
+    assert end_round(SMALL, position).hold == Hold(team, 1)
+
+
+def test_walking_through_the_point_captures_nothing(make_battle, at):
+    position = make_battle([piece(4, 3, FOOT, 0), piece(1, 1, FOOT, 1)], point=(4, 4))
+    position = take(SMALL, position, Verb.MOVE, at(4, 4))
+    assert position.hold == NOBODY
+    position = take(SMALL, position, Verb.MOVE, at(4, 5))
+    assert end_round(SMALL, position).hold == NOBODY
+
+
+def test_the_owner_keeps_the_point_with_nobody_on_it_and_its_clock_runs(make_battle):
+    pieces = [piece(1, 1, FOOT, 0), piece(7, 7, FOOT, 1)]
+    position = make_battle(pieces, point=(4, 4), hold=Hold(0, 2))
+    assert end_round(SMALL, position).hold == Hold(0, 3)
+
+
+def test_a_flip_restarts_the_clock_at_one_for_the_new_owner(make_battle):
+    pieces = [piece(4, 4, FOOT, 1), piece(1, 1, FOOT, 0)]
+    position = make_battle(pieces, point=(4, 4), hold=Hold(0, 4))
+    after = end_round(SMALL, position)
+    assert after.hold == Hold(1, 1)
+    assert not after.over
+
+
+def test_the_unit_on_the_point_dying_leaves_the_clock_running(make_battle, at):
+    pieces = [
+        piece(4, 3, FOOT, 1),
+        piece(4, 4, FOOT, 0, hp=1),
+        piece(1, 1, FOOT, 0),
+    ]
+    for seed in range(50):
+        position = make_battle(pieces, point=(4, 4), hold=Hold(0, 1), seed=seed)
+        after = take(SMALL, position, Verb.ATTACK, at(4, 4))
+        if after.state.units.kind[at(4, 4)] < 0:
+            assert end_round(SMALL, after).hold == Hold(0, 2)
+            return
+    raise AssertionError("no attack hit in 50 tries")
+
+
+def test_holding_for_the_rounds_needed_wins_and_one_fewer_does_not(make_battle):
+    pieces = [piece(1, 1, FOOT, 0), piece(7, 7, FOOT, 1)]
+    won = end_round(SMALL, make_battle(pieces, point=(4, 4), hold=Hold(1, 4)))
+    assert (won.over, won.winner, won.hold, won.round) == (True, 1, Hold(1, 5), 1)
+    assert won.events[-1] == GameOver(1, "held")
+    going = end_round(SMALL, make_battle(pieces, point=(4, 4), hold=Hold(1, 3)))
+    assert not going.over
+
+
+@pytest.mark.parametrize(("round_", "over"), [(9, False), (10, True), (11, True)])
+def test_nobody_capturing_by_the_deadline_loses_it_for_team_one(make_battle, round_, over):
+    pieces = [piece(1, 1, FOOT, 0), piece(7, 7, FOOT, 1)]
+    after = end_round(SMALL, make_battle(pieces, point=(4, 4), round=round_))
+    assert after.over == over
+    if over:
+        assert after.winner == 0
+        assert after.events[-1] == GameOver(0, "deadline")
+
+
+@pytest.mark.parametrize("team", [0, 1])
+def test_a_capture_at_the_end_of_the_deadline_round_is_in_time(make_battle, team):
+    pieces = [piece(4, 4, FOOT, team), piece(1, 1, FOOT, 1 - team)]
+    after = end_round(SMALL, make_battle(pieces, point=(4, 4), round=10))
+    assert after.hold == Hold(team, 1)
+    assert not after.over
+
+
+@pytest.mark.parametrize("owner", [0, 1])
+def test_at_the_end_of_the_last_round_the_owner_wins_whatever_is_left(make_battle, owner):
+    game = dataclasses.replace(SMALL, max_rounds=1, capture_by=1)
+    pieces = [piece(1, 1, CAPTAIN, 1 - owner), piece(7, 7, FOOT, owner, hp=1)]
+    after = end_round(game, make_battle(pieces, game=game, point=(4, 4), hold=Hold(owner, 1)))
+    assert (after.over, after.winner, after.round) == (True, owner, 1)
+    assert after.events[-1] == GameOver(owner, "cap")
+
+
+def test_a_flip_in_the_last_round_wins_it(make_battle):
+    game = dataclasses.replace(SMALL, max_rounds=1, capture_by=1)
+    pieces = [piece(4, 4, FOOT, 1), piece(1, 1, FOOT, 0)]
+    after = end_round(game, make_battle(pieces, game=game, point=(4, 4), hold=Hold(0, 3)))
+    assert after.winner == 1
+
+
+def test_killing_the_last_enemy_wins_at_once_whoever_owns_the_point(make_battle, at):
+    pieces = [piece(4, 3, FOOT, 0), piece(4, 4, FOOT, 1, hp=1), piece(4, 2, FOOT, 0)]
+    for seed in range(50):
+        position = make_battle(pieces, seed=seed, point=(4, 4), hold=Hold(1, 4))
+        after = take(SMALL, position, Verb.ATTACK, at(4, 4))
+        if after.over:
+            assert after.winner == 0
+            assert after.events[-1] == GameOver(0, "killed")
+            return
+    raise AssertionError("no attack hit in 50 tries")
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_no_game_ends_in_a_draw(seed):
+    rng = np.random.default_rng(seed)
+    for position, _ in play_random(TINY, seed, rng):
+        if position.over:
+            assert position.winner in (0, 1)
+            assert position.round <= TINY.max_rounds
+
+
+def test_rules_reject_a_deadline_after_the_last_round_and_even_shapes():
+    with pytest.raises(ValueError, match="capture_by"):
+        Tactics(capture_by=21)
+    with pytest.raises(ValueError, match="odd"):
+        Tactics(shape=(24, 25))
+
+
+@pytest.mark.parametrize("name", ["hold_rounds", "capture_by"])
+def test_rules_reject_objective_numbers_that_are_not_positive_integers(name, not_an_integer):
+    with pytest.raises(TypeError, match=name):
+        dataclasses.replace(Tactics(), **{name: not_an_integer})
+    with pytest.raises(ValueError, match=name):
+        dataclasses.replace(Tactics(), **{name: 0})
 
 
 # Errors.
@@ -760,3 +976,21 @@ def test_tactics_shows_players_the_whole_position():
     assert TINY.view(position, 0) is position
     assert TINY.view(position, 1) is position
     assert TINY.n_players == 2
+
+
+def test_writing_to_the_legal_mask_cannot_change_what_is_legal():
+    position = TINY.start(1)
+    mask = TINY.legal(position)
+    verb, cell = np.argwhere(mask)[0]
+    mask[:] = False
+    assert TINY.legal(position)[verb, cell]
+    TINY.step(position, (int(verb), int(cell)))
+
+
+def test_a_decisions_targets_cannot_be_written(make_battle, at):
+    position = make_battle([piece(1, 1, FOOT, 0), piece(1, 2, FOOT, 1)])
+    turn = SMALL._turn(position)
+    for verb in (Verb.MOVE, Verb.ATTACK, Verb.SWAP, Verb.END, Verb.DEFER):
+        assert not turn.targets(verb).flags.writeable
+    assert turn.targets(Verb.END) is turn.targets(Verb.END)
+    assert turn.targets(Verb.END)[at(1, 1)]

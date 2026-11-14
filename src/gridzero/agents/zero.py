@@ -104,8 +104,9 @@ class AlphaZeroPlayer[G: Game[Any, Any], P: Position[State, object]]:
 
     ``sigma`` follows ``mctx``'s completed values by mixed value: an action's mean value for
     the acting player where visited, elsewhere a mix of the node's own value and the visited
-    actions' means weighted by the prior; rescaled to [0, 1] over the node's actions, then
-    multiplied by ``(c_visit + most visits) * c_scale``.
+    actions' means weighted by the prior; multiplied by ``(c_visit + most visits) * c_scale``.
+    At the root they are first rescaled to [0, 1] over the node's actions, as ``mctx`` does, for
+    them to weigh against the noise. Below it they aren't, unlike ``mctx`` (see `sigma`).
 
     ``G`` is the game's own class and ``P`` its position. ``G`` is bounded by ``Game[Any,
     Any]`` only: Python can't bound a type parameter by another (``Game[P, P]``).
@@ -123,8 +124,11 @@ class AlphaZeroPlayer[G: Game[Any, Any], P: Position[State, object]]:
         self-play, off to play for strength (the best by prior and value).
     c_visit : float, default 50.0
         Visits added to the most visits in ``sigma``'s scale, at least 0.
-    c_scale : float, default 0.1
-        ``sigma``'s scale per visit, at least 0.
+    c_scale : float, default 0.03
+        ``sigma``'s scale per visit, at least 0. ``mctx`` uses 0.1, but the root's values are
+        rescaled to [0, 1] (`sigma`), so at 0.1 any gap between them outweighs the prior, and a
+        network's noisy values decide: on 15x15 Tactics (2026-11-09), a network taught by a code
+        player beat greedy 22-74 at 0.1 and 42-54 at 0.03.
 
     Raises
     ------
@@ -137,7 +141,7 @@ class AlphaZeroPlayer[G: Game[Any, Any], P: Position[State, object]]:
     considered: int = 16
     noise: bool = False
     c_visit: float = 50.0
-    c_scale: float = 0.1
+    c_scale: float = 0.03
 
     def __post_init__(self) -> None:
         check_int(self.simulations, "simulations", minimum=1)
@@ -313,7 +317,9 @@ def self_play[G: Learnable[Any], P: Position[State, object]](
 ) -> tuple[Experience, list[Played[P]]]:
     """Play games of a player against itself, all at once, and keep decisions to learn from.
 
-    Each game searches its decisions in turn, as ``player.search`` does; the games' searches
+    Each game searches its decisions in turn, as ``player.search`` does, from what the game shows
+    the deciding player (``game.view``: the position itself, unless the game hides something
+    and shows a position of what the player believes); the games' searches
     take a leaf each, and the player's evaluator judges those leaves in one call, so a batched
     evaluator (`net.NetEvaluator` on a GPU) sees as many positions per call as games still
     running. Each searched decision is kept with probability ``keep``: the observation, the
@@ -423,7 +429,8 @@ class _Running[P: Position[State, object]]:
                     verb, cell = np.argwhere(legal)[0]
                     self.position = game.step(self.position, (int(verb), int(cell)))
                 else:
-                    self.search = _Search(player, game, self.position, self.rng, legal)
+                    shown = game.view(self.position, game.player(self.position))
+                    self.search = _Search(player, game, shown, self.rng, legal)
                     self.searched += 1
 
     def _keep(
@@ -432,7 +439,8 @@ class _Running[P: Position[State, object]]:
         """Keep the decision at the current position, in the deciding player's frame."""
         mover = game.player(self.position)
         own = game.frame(mover).into(legal)
-        self.obs.append(np.rint(game.observe(self.position, mover) * 255).astype(np.uint8))
+        shown = game.view(self.position, mover)
+        self.obs.append(np.rint(game.observe(shown, mover) * 255).astype(np.uint8))
         self.legal.append(np.packbits(own.ravel()))
         self.policy.append(game.frame(mover).into(policy)[own].astype(np.float32))
         self.movers.append(mover)
@@ -514,7 +522,7 @@ def finalists(n: NDArray[np.int64], considered: int, simulations: int) -> NDArra
     After a whole round, those it visited, which have the most visits. When the simulations end
     inside a round, those with the visits it chose among are finalists too: the score ranks the
     actions it had yet to visit as it ranked the ones it visited, so the best of them is among
-    those the round would have kept (finding G8).
+    those the round would have kept.
 
     Parameters
     ----------
@@ -544,12 +552,21 @@ def sigma(
     logits: NDArray[np.float64],
     c_visit: float,
     c_scale: float,
+    *,
+    rescale: bool,
 ) -> NDArray[np.float64]:
     """Return the scaled completed values of a node's actions, as ``mctx`` completes them.
 
     An action's mean value where visited; elsewhere the node's own value mixed with the visited
-    actions' means weighted by the prior; rescaled to [0, 1] over the node's actions, then
-    multiplied by ``(c_visit + most visits) * c_scale``.
+    actions' means weighted by the prior; if asked, rescaled to [0, 1] over the node's actions;
+    then multiplied by ``(c_visit + most visits) * c_scale``.
+
+    ``mctx`` rescales at every node. Below the root that locks a node onto the first action it
+    tries, if that looks better than the node's own value: the mix tends to the action's mean,
+    so the gap between them vanishes, and rescaling stretches any gap to the whole range. The
+    action keeps the whole bonus and the others none, so they are never tried, however many
+    simulations follow. With a fit on Connect Four at 512 simulations, 68% of the nodes below
+    the root with 20 visits or more had tried one action only, and 1% without rescaling there.
 
     Parameters
     ----------
@@ -563,6 +580,8 @@ def sigma(
         The prior's log-probabilities.
     c_visit, c_scale : float
         The scale's constants.
+    rescale : bool
+        Rescale to [0, 1] over the node's actions: at the root, not below it.
 
     Returns
     -------
@@ -576,8 +595,9 @@ def sigma(
         total = int(n.sum())
         raw = (raw + total * weighted) / (total + 1)
     completed = np.where(seen, q, raw)
-    low, high = completed.min(), completed.max()
-    completed = (completed - low) / max(high - low, 1e-8)
+    if rescale:
+        low, high = completed.min(), completed.max()
+        completed = (completed - low) / max(high - low, 1e-8)
     return (c_visit + int(n.max())) * c_scale * completed
 
 
@@ -766,7 +786,15 @@ class _Search[G: Game[Any, Any], P: Position[State, object]]:
         raw = node.value
         if node.mover == 1:
             q, raw = 1.0 - q, 1.0 - raw
-        return sigma(q, raw, n, node.logits, self.player.c_visit, self.player.c_scale)
+        return sigma(
+            q,
+            raw,
+            n,
+            node.logits,
+            self.player.c_visit,
+            self.player.c_scale,
+            rescale=node is self.root,
+        )
 
     def _child(self, node: _Node[P], i: int) -> _Node[P]:
         """Return the position after action ``i``: kept if its step drew no dice, else sampled."""

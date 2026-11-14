@@ -16,11 +16,9 @@ def net(seed=0):
     return PolicyNet(TINY, channels=8, blocks=1)
 
 
-def capped(played):
-    """Games that ended with both teams on the board: at the round cap."""
-    return sum(
-        len(set(p.final.state.units.team[p.final.state.occupied].tolist())) == 2 for p in played
-    )
+def capped(played, game):
+    """Games that lasted to the round cap."""
+    return sum(p.final.round == game.max_rounds for p in played)
 
 
 def test_self_play_against_greedy_reports_and_trains():
@@ -35,10 +33,10 @@ def test_self_play_against_greedy_reports_and_trains():
 
 
 def test_games_at_the_round_cap_show_in_their_final_positions():
-    game = dataclasses.replace(TINY, max_rounds=1)  # no game ends in one round
+    game = dataclasses.replace(TINY, max_rounds=1, capture_by=1)  # no game ends sooner
     (it,) = self_play(net(), game, PPO(games=2, epochs=1), iterations=1, seed=0)
-    assert capped(it.played) == 2
-    assert it.draws == 2  # TINY draws at the cap
+    assert capped(it.played, game) == 2
+    assert it.draws == 0  # the game has none
 
 
 def test_greedy_beats_an_untrained_network_outright():
@@ -46,5 +44,5 @@ def test_greedy_beats_an_untrained_network_outright():
     settings = PPO(games=2, opponent=GreedyPlayer(), against_opponent=1.0, epochs=1)
     (it,) = self_play(net(), game, settings, iterations=1, seed=0)
     assert it.opponent_losses == 2
-    assert capped(it.played) == 0
+    assert capped(it.played, game) == 0
     assert it.draws == 0

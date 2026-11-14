@@ -168,6 +168,7 @@ def self_play(
     iterations: int = 10,
     seed: int = 0,
     workers: int = 1,
+    seconds: float | None = None,
 ) -> Iterator[Iteration]:
     """Train a network by self-play, one iteration at a time.
 
@@ -191,6 +192,12 @@ def self_play(
         Seed of the first game, at least 0. It also seeds the order of decisions in learning.
     workers : int, default 1
         Processes playing games, at least 1. With 1, games are played here.
+    seconds : float, optional
+        A time box, as `zero_train.train`'s: no iteration starts that would end after
+        ``seconds`` from the start, as estimated from the last iteration's length. The first
+        always runs. None for no box. The box is wall time from the first iteration's start,
+        so it counts what the caller does between iterations too (such as scoring the
+        network), and so does each iteration's length.
 
     Yields
     ------
@@ -201,8 +208,8 @@ def self_play(
     Raises
     ------
     TypeError, ValueError
-        If ``iterations``, ``seed`` or ``workers`` is not an integer in range, or the game
-        hasn't two players.
+        If ``iterations``, ``seed``, ``workers`` or ``seconds`` is not a number in range, or
+        the game hasn't two players.
     """
     if game.n_players != 2:
         raise ValueError(f"PPO self-play plays games of two players, not {game.n_players}")
@@ -210,11 +217,19 @@ def self_play(
     iterations = check_int(iterations, "iterations", minimum=1)
     seed = check_int(seed, "seed", minimum=0)
     workers = check_int(workers, "workers", minimum=1)
-    return _self_play(net, game, settings, iterations, seed, workers)
+    if seconds is not None:
+        check_real(seconds, "seconds", 0.0)
+    return _self_play(net, game, settings, iterations, seed, workers, seconds)
 
 
 def _self_play(
-    net: PolicyNet, game: Learnable[Any], settings: PPO, iterations: int, seed: int, workers: int
+    net: PolicyNet,
+    game: Learnable[Any],
+    settings: PPO,
+    iterations: int,
+    seed: int,
+    workers: int,
+    seconds: float | None,
 ) -> Iterator[Iteration]:
     """Run the iterations of `self_play` once its arguments are checked."""
     device = channels_last(net)
@@ -224,9 +239,13 @@ def _self_play(
     if workers > 1:
         context = multiprocessing.get_context("spawn")  # as in series
         pool = ProcessPoolExecutor(workers, mp_context=context)
+    begin = time.perf_counter()
+    last = 0.0
     try:
         for i in range(iterations):
-            start = time.perf_counter()
+            start = began = time.perf_counter()
+            if i > 0 and seconds is not None and began - begin + last > seconds:
+                break  # an iteration as long as the last wouldn't fit in the time box
             weights = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
             jobs = _jobs(game, net, weights, settings, seed + i * settings.games, workers)
             if pool is None:
@@ -258,6 +277,7 @@ def _self_play(
                 play_seconds=played,
                 learn_seconds=time.perf_counter() - start,
             )
+            last = time.perf_counter() - began  # with what the caller did since the yield
     finally:
         if pool is not None:
             pool.shutdown(cancel_futures=True)
