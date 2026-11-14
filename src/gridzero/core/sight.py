@@ -15,13 +15,13 @@ Lines are traced from the lower cell id, so sight is symmetric.
 
 import itertools
 from dataclasses import dataclass
-from typing import SupportsIndex
+from typing import NamedTuple, SupportsIndex
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from gridzero.core import _kernels
-from gridzero.core._arrays import cell_mask, cell_selection, check_cell
+from gridzero.core._arrays import cell_mask, cell_selection, check_cell, read_only
 from gridzero.core.implementations import fast
 from gridzero.core.lattice import LatticeSpace, _Frame
 from gridzero.core.space import RADIUS_RTOL, check_radius
@@ -192,6 +192,114 @@ def sight(
     rows, targets = rows[others], targets[others]
     seen[rows, targets] = _clear(space, cells[rows], targets, walls)
     return seen if separate else seen.any(axis=0)
+
+
+class SightLines(NamedTuple):
+    """What may block the line from a cell to each cell within a radius, by lattice offset.
+
+    Row ``i`` of every array is about the line from a cell at coordinates ``c`` to the cell at
+    ``c + offsets[i]``. That line is clear unless a cell of ``crossed[i]`` is blocked, or both
+    cells of a pair of ``touched[i]`` are. Cells beyond the lattice's edge block nothing.
+    """
+
+    offsets: NDArray[np.int64]
+    """Lattice offsets to the cells within the radius, shape (m, 2): the cell itself first, then
+    by distance between centers, nearest first, and by offset among those equally far. So the
+    cells within any smaller radius come first."""
+    crossed: NDArray[np.int64]
+    """Rows of `offsets` whose cells the line crosses, its two ends aside: shape (m, s), in
+    ascending order, -1 in unused slots."""
+    touched: NDArray[np.int64]
+    """Pairs of rows of `offsets` whose cells touch the line from both sides at one point:
+    shape (m, p, 2), the cell on the line's left first, -1 in unused slots."""
+
+
+def sight_lines(space: LatticeSpace, radius: float, cell: SupportsIndex = 0) -> SightLines:
+    """Return what may block the line from a cell to each cell within ``radius``, as tables.
+
+    Lines between cells of a lattice depend only on the offset between them, so sight within a
+    radius is a table: `sight` from a cell, read from the tables, is ``True`` at the cell of
+    each offset whose row finds nothing blocking (see `SightLines`). Use it where lines are
+    looked up rather than traced, such as rules that run for many boards at once.
+
+    Parameters
+    ----------
+    space : LatticeSpace
+        A 2-D lattice: squares, hexagons or triangles.
+    radius : float
+        How far to look, between centers, as `within` measures.
+    cell : int, default 0
+        A cell id. On squares and hexagons every cell has the same tables. On triangles, those
+        pointing up have one set and those pointing down another.
+
+    Returns
+    -------
+    SightLines
+        The offsets to the cells within ``radius``, and for each the cells that block its
+        line. Offsets that leave the lattice from every cell are left out.
+
+    Raises
+    ------
+    TypeError
+        If ``space`` is not a `LatticeSpace`, ``radius`` is not a real number, or ``cell`` is
+        not an integer.
+    ValueError
+        If the lattice is not 2-D, ``radius`` is negative, infinite or NaN, or it reaches ``r``
+        cells along an axis that wraps and is shorter than ``2 * r + 1``: two offsets would
+        then reach one cell.
+    IndexError
+        If ``cell`` is not a cell id.
+    """
+    _check_lattice(space)
+    tiling, frame = space._tiling, _frame(space)
+    kind = int(space.coords[check_cell(cell, space.n_cells)] @ tiling.type_steps % tiling.n_types)
+    limit = check_radius(radius) * (1 + RADIUS_RTOL)
+    reach = space._offset_reach(limit)
+    space._check_wrap(radius, np.where(space.periodic, reach, 0))
+    near = space._offsets_within(limit)[0][kind]
+    # A room around one cell of the same type, with every cell a line within the radius meets.
+    base = reach + _MARGIN + 1
+    base[0] += (kind - base @ tiling.type_steps) % tiling.n_types
+    room = LatticeSpace(tuple((2 * base + 1).tolist()), space.tiling, False)
+    here, _ = _frame_centers(room, base)
+    there, _ = _frame_centers(room, base + near)
+    step = there - here
+    squared = np.einsum("...i,ij,...j->...", step, frame.metric, step)
+    near = near[np.lexsort((near[:, 1], near[:, 0], squared))]
+    offsets = np.concatenate([np.zeros((1, 2), dtype=np.int64), near])
+    row = {(int(dq), int(dr)): i for i, (dq, dr) in enumerate(offsets)}
+    start = int(room.ravel(base))
+    crossed: list[list[int]] = [[]]
+    touched: list[list[tuple[int, int]]] = [[]]
+    for offset in near:
+        end = int(room.ravel(base + offset))
+        low, high = min(start, end), max(start, end)
+        trace = _trace(room, room.coords[low], room.coords[high])
+        between = (trace.ids != start) & (trace.ids != end)
+        # A cell the table lacks shares no lattice with the viewer, so it never blocks: the
+        # cells a line meets are no further from its start than its end is.
+        rows = np.array(
+            [row.get((int(dq), int(dr)), -1) for dq, dr in room.coords[trace.ids] - base],
+            dtype=np.int64,
+        )
+        between &= rows >= 0
+        crossed.append(sorted(rows[between & trace.crossed].tolist()))
+        left = (between & trace.touched & (trace.side > 0)).nonzero()[0]
+        right = (between & trace.touched & (trace.side < 0)).nonzero()[0]
+        touched.append(
+            sorted(
+                (int(rows[a]), int(rows[b]))
+                for a, b in itertools.product(left.tolist(), right.tolist())
+                if max(trace.low[a], trace.low[b]) <= min(trace.high[a], trace.high[b])
+            )
+        )
+    alone = np.full((len(offsets), max(map(len, crossed))), -1, dtype=np.int64)
+    pairs = np.full((len(offsets), max(map(len, touched)), 2), -1, dtype=np.int64)
+    for i, (cells, both) in enumerate(zip(crossed, touched, strict=True)):
+        alone[i, : len(cells)] = cells
+        if both:
+            pairs[i, : len(both)] = both
+    return SightLines(read_only(offsets), read_only(alone), read_only(pairs))
 
 
 def _sight_offsets(space: LatticeSpace, limit: float) -> NDArray[np.int64] | None:

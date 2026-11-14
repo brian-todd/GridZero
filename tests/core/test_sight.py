@@ -19,6 +19,7 @@ from gridzero.core import (
     icosphere,
     line,
     sight,
+    sight_lines,
     visible,
     within,
 )
@@ -443,3 +444,129 @@ def test_bad_viewers_raise(not_cell_ids):
         sight(space, [0, 16], blocked)
     with pytest.raises(ValueError, match="1-D"):
         sight(space, [[0, 1]], blocked)
+
+
+# Sight as tables.
+
+
+def seen_through(space, lines, blocked, cell):
+    """What ``cell`` sees, read from the tables of `sight_lines` as their docstring says."""
+    coords = space.unravel(cell) + lines.offsets
+    shape, wraps = np.array(space.shape), np.array(space.periodic)
+    coords = np.where(wraps, coords % shape, coords)
+    inside = ((coords >= 0) & (coords < shape)).all(axis=1)
+    at = np.where(inside, coords @ [space.shape[1], 1], space.n_cells)  # row-major ids
+    there = np.append(np.append(blocked, False)[at], False)  # by row, then the unused slot
+    pairs = there[lines.touched[..., 0]] & there[lines.touched[..., 1]]
+    clear = ~there[lines.crossed].any(axis=1) & ~pairs.any(axis=1)
+    seen = np.zeros(space.n_cells + 1, bool)
+    seen[at[clear]] = True
+    return seen[:-1]
+
+
+LINES = [  # a board and radii it is long enough for where it wraps
+    ("square", (1.0, 2.5, 4.0)),
+    ("square-wrapped", (1.0, 2.0)),
+    ("hex", (1.0, 3.0, 5.0)),
+    ("hex-wrapped", (1.0, 2.0)),
+    ("triangle", (1.0, 2.0, 3.5)),
+    ("triangle-wrapped", (1.0,)),
+]
+
+
+@pytest.mark.parametrize(("name", "radii"), LINES)
+def test_sight_read_from_its_lines_is_sight(name, radii):
+    space = board(name)
+    rng = np.random.default_rng(11)
+    for radius in radii:
+        for share in (0.1, 0.3, 0.6):
+            walls = rng.random(space.n_cells) < share
+            for cell in range(space.n_cells):  # every type of cell, the edges included
+                found = seen_through(space, sight_lines(space, radius, cell), walls, cell)
+                np.testing.assert_array_equal(found, sight(space, cell, walls, radius), str(cell))
+
+
+@pytest.mark.parametrize(("name", "radii"), LINES)
+def test_sight_lines_list_the_cells_in_range_nearest_first(name, radii):
+    space = board(name)
+    cell = space.n_cells // 2
+    lines = sight_lines(space, radii[-1], cell)
+    assert lines.offsets[0].tolist() == [0, 0]
+    assert len({tuple(o) for o in lines.offsets.tolist()}) == len(lines.offsets)
+    step = lines.offsets @ space.basis.T  # between cells of one type: no shift
+    if space.tiling != "triangle":
+        far = np.linalg.norm(step, axis=1)
+        assert (np.diff(far) > -1e-12).all()
+        assert far[-1] <= radii[-1] * (1 + 1e-9)
+    for radius in radii[:-1]:  # the cells within a smaller radius come first
+        fewer = sight_lines(space, radius, cell).offsets
+        np.testing.assert_array_equal(fewer, lines.offsets[: len(fewer)])
+
+
+def test_sight_lines_are_read_only_tables_of_rows():
+    lines = sight_lines(LatticeSpace((9, 9), tiling="hex", periodic=False), 3.0)
+    m = len(lines.offsets)
+    assert m == 37  # the cell and 6 + 12 + 18 around it
+    for table in lines:
+        assert table.dtype == np.int64
+        assert not table.flags.writeable
+    assert lines.crossed.shape[0] == m
+    assert lines.touched.shape[0::2] == (m, 2)
+    assert lines.crossed.min() >= -1
+    assert lines.crossed.max() < m
+    assert (lines.crossed[0] == -1).all()  # a cell sees itself whatever stands around
+    assert (lines.touched[0] == -1).all()
+
+
+def test_a_line_between_hexes_two_steps_apart_is_blocked_by_the_cell_between():
+    lines = sight_lines(LatticeSpace((9, 9), tiling="hex", periodic=False), 2.0)
+    rows = {tuple(o): i for i, o in enumerate(lines.offsets.tolist())}
+    crossed = lines.crossed[rows[2, 0]]
+    assert crossed[crossed >= 0].tolist() == [rows[1, 0]]
+    assert (lines.touched[rows[2, 0]] == -1).all()
+
+
+def test_a_line_along_an_edge_between_hexes_has_one_pair_and_no_cell_alone():
+    lines = sight_lines(LatticeSpace((9, 9), tiling="hex", periodic=False), 2.0)
+    rows = {tuple(o): i for i, o in enumerate(lines.offsets.tolist())}
+    at = rows[2, -1]  # toward a corner: along the edge between two neighbors
+    assert (lines.crossed[at] == -1).all()
+    pairs = lines.touched[at]
+    pairs = pairs[pairs[:, 0] >= 0]
+    assert {frozenset(p) for p in pairs.tolist()} == {frozenset((rows[1, 0], rows[1, -1]))}
+
+
+def test_neighbors_have_nothing_between_them():
+    lines = sight_lines(LatticeSpace((5, 5)), 1.0)
+    assert lines.crossed.shape == (5, 0)
+    assert lines.touched.shape == (5, 0, 2)
+
+
+def test_sight_lines_leave_out_offsets_that_leave_a_small_board():
+    lines = sight_lines(LatticeSpace((3, 3), tiling="hex", periodic=False), 5.0)
+    assert np.abs(lines.offsets).max() == 2
+    assert len(lines.offsets) == 25
+
+
+def test_sight_lines_on_a_torus_too_short_for_the_radius_raise():
+    with pytest.raises(ValueError, match="periodic axis"):
+        sight_lines(LatticeSpace((6, 5), tiling="hex"), 4.0)
+    sight_lines(LatticeSpace((6, 5), tiling="hex", periodic=False), 4.0)  # only where it wraps
+
+
+def test_sight_lines_of_other_spaces_and_bad_arguments_raise(not_an_integer, not_a_real):
+    space = LatticeSpace((4, 4))
+    with pytest.raises(TypeError, match="2-D LatticeSpace"):
+        sight_lines(icosphere(1), 1.0)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError, match="2-D"):
+        sight_lines(LatticeSpace((3, 3, 3)), 1.0)
+    with pytest.raises(TypeError):
+        sight_lines(space, not_a_real)
+    with pytest.raises(TypeError):
+        sight_lines(space, 1.0, not_an_integer)
+    with pytest.raises(ValueError, match="radius"):
+        sight_lines(space, -1.0)
+    with pytest.raises(ValueError, match="radius"):
+        sight_lines(space, np.inf)
+    with pytest.raises(IndexError):
+        sight_lines(space, 1.0, 16)

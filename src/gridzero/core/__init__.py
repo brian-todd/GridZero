@@ -25,6 +25,9 @@ snap, turns, in_front
 line, visible, sight
     Lines between cells' centers on a 2-D lattice: the cells one crosses, whether it is clear
     of blocked cells, and every cell a viewer sees.
+sight_lines, SightLines
+    Sight within a radius as tables: for each offset between cells, the cells that block the
+    line.
 steps, reach, path, hops
     Moving between adjacent cells, with costs: what reaching each cell costs from the nearest
     source, the cells a budget reaches, a cheapest path, and the fewest moves between any cells
@@ -168,7 +171,7 @@ from gridzero.core.paths import hops, path, reach, steps
 from gridzero.core.points import random_points
 from gridzero.core.ranges import distance, within
 from gridzero.core.regions import border, regions
-from gridzero.core.sight import line, sight, visible
+from gridzero.core.sight import SightLines, line, sight, sight_lines, visible
 from gridzero.core.space import AdjacencyKind, Space
 
 __all__ = [
@@ -203,6 +206,7 @@ __all__ = [
     "NestedState",
     "Phase",
     "Reduction",
+    "SightLines",
     "Simulation",
     "Source",
     "Space",
@@ -230,6 +234,7 @@ __all__ = [
     "regions",
     "resolve",
     "sight",
+    "sight_lines",
     "snap",
     "steps",
     "turns",
