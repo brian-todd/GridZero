@@ -79,8 +79,10 @@ taskset -c 4 uv run python -m benchmarks.bench   # timings, pinned to one perfor
 - Python 3.15. Run Python only through `uv run`, never `pip install`.
 - Add dependencies only with `uv add` or `uv add --dev`, and **ask before adding one**.
 - We build on what is already locked: NumPy, SciPy, Numba, Matplotlib, pandas and
-  scikit-learn. Torch and CUDA are available. GPU work in `core` is deferred; the networks of
-  `agents` train on the GPU (RTX 3080, 10 GB: mind the memory) and play on the CPU.
+  scikit-learn. Torch and CUDA are available, and JAX (`jax[cuda13]`, added on 2026-11-13 for
+  rules and searches that run in batches on the GPU; nothing imports it yet). GPU work in `core`
+  is deferred; the networks of `agents` train on the GPU (RTX 3080, 10 GB: mind the memory) and
+  play on the CPU.
   JupyterLab is a dev tool, kept for when notebooks return.
 
 ## Code style
