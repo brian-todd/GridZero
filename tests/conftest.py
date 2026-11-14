@@ -5,7 +5,12 @@ Pass dependencies such as random generators explicitly. Spaces are immutable, so
 cache and share them between tests.
 """
 
+import os
 from collections.abc import Callable, Iterator
+
+# JAX runs the tests on the CPU: the same integers as on a GPU, with no memory to share. Set
+# before anything imports JAX.
+os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
 import matplotlib
 import numpy as np
