@@ -16,8 +16,9 @@ How it differs in form:
 - Every fact about hexes is a table that `core` filled (`gridzero.batched.patch`): the rules
   here only gather. Stats, caps and bonuses are read from the same `Tactics` value, so a
   variant by parameters needs no new code.
-- The dice are JAX's own (`TacticsArrays.draws`). `TacticsArrays.apply` takes a step's dice as
-  an argument: the game's, to copy its step, or a search's, to see a hit and a miss.
+- The dice are JAX's own (`TacticsArrays.roll`). `TacticsArrays.apply` takes a step's dice as
+  an argument: the game's, to copy its step. `TacticsArrays.outcomes` gives a search every way
+  a step's attacks may hit and miss, each with its exact chance.
 """
 
 from typing import Any, NamedTuple, cast
@@ -121,6 +122,17 @@ class Dice(NamedTuple):
     starts a round lines up every unit."""
 
 
+class _Rolled(NamedTuple):
+    """The rolls of a step under way: those given, how many are used, and what each needed."""
+
+    rolls: jax.Array
+    """The d20 of each attack, in order: int32, shape (n_rolls,)."""
+    used: jax.Array
+    """How many of them the step has used so far: int32, shape ()."""
+    faces: jax.Array
+    """How many of a d20's faces hit, for each roll used, 1 to 19: int32, shape (n_rolls,)."""
+
+
 _UNITS: dict[str, tuple[type[np.generic], int]] = {
     "cell": (np.int16, -1),
     "kind": (np.int8, -1),
@@ -186,6 +198,10 @@ class TacticsArrays:
     n_rolls : int
         The d20 rolls a step may make: 2 for an attack against a unit that braces, or one
         per unit of a side that may defer its attack.
+    n_outcomes : int
+        The ways a step's rolls may hit and miss that `outcomes` tells apart: ``2 **
+        n_rolls``. In outcome ``o``, the step's ``i``-th roll hits if bit ``i`` of ``o`` is
+        set.
     targets : int
         The cells around a unit that MOVE, ATTACK and DEFER may name.
     move0, attack0, defer0, swap0, build0, break0, face0, end0 : int
@@ -241,6 +257,7 @@ class TacticsArrays:
         defers = sum(cap for cap, s in zip(game.caps, kinds, strict=True) if s.defers)
         self._watchers = min(game.team_size, defers)
         self.n_rolls = max(2, self._watchers)
+        self.n_outcomes = 1 << self.n_rolls
         self._entries = max(self._steps, 2)  # tiles a unit may enter in a step: a walk, a swap
         self._home = home
         self._point = center_cell(space)
@@ -289,6 +306,45 @@ class TacticsArrays:
         if game.fog:
             self.far = batched.patch(space, max(s.sight for s in kinds))
             self._sight = j(np.array([self.far.within(s.sight) for s in kinds] + last))
+        self._hits = j((np.arange(self.n_outcomes)[:, None] >> np.arange(self.n_rolls)) & 1 > 0)
+        # Each local action as a team's frame names it (`Tactics.frame`): its verb there,
+        # and for a battle the slot around the acting unit of the tile it names.
+        frames = [game.frame(team) for team in (0, 1)]
+        verb_in = np.array(
+            [[f.action_into((v, 0)).verb for v in range(game.n_verbs)] for f in frames]
+        )
+        cell_in = np.array([[f.action_into((0, c)).cell for c in range(n)] + [n] for f in frames])
+        verbs, slots = self._battle_actions()
+        self._verb_in = j(verb_in[:, verbs].astype(np.int32))
+        self._cell_in = j(cell_in.astype(np.int32))
+        self._slot_of = j(slots)
+        placed = Verb.PLACE + np.repeat(np.arange(len(kinds)), self.home_size)
+        deploying = np.zeros((2, self.n_actions), dtype=np.int32)
+        for team in (0, 1):
+            placed_on = cell_in[team, np.tile(self._home_tiles[team], len(kinds))]
+            deploying[team, : placed.size] = verb_in[team, placed] * n + placed_on
+        self._deploying = j(deploying)
+
+    def _battle_actions(self) -> tuple[NDArray[np.int32], NDArray[np.int32]]:
+        """Return the game's verb of each local action of a battle, and the slot it names.
+
+        Two int32 arrays of shape (end0 + 1,): the slot is that of the target among the cells
+        around the acting unit (``near``), 0 (the unit's own tile) for FACE and END.
+        """
+        t, b, turns = self.targets, self._beside, self.end0 - self.face0
+        verbs = np.concatenate(
+            [
+                np.repeat([Verb.MOVE, Verb.ATTACK, Verb.DEFER], t),
+                np.repeat([Verb.SWAP, Verb.BUILD, Verb.BREAK], b),
+                Verb.FACE + np.arange(turns),
+                [Verb.END],
+            ]
+        )
+        around, beside = np.arange(1, t + 1), np.arange(1, b + 1)
+        slots = np.concatenate(
+            [around, around, around, beside, beside, beside, np.zeros(turns + 1, dtype=np.int64)]
+        )
+        return verbs.astype(np.int32), slots.astype(np.int32)
 
     # Between the game and its arrays (NumPy).
 
@@ -466,19 +522,9 @@ class TacticsArrays:
         a = game.active(position)
         if a < 0:
             raise ValueError("the game is over")
-        around, beside = self._np_at[a, 1 : self.targets + 1], self._np_at[a, 1 : self._beside + 1]
-        t, b, turns = self.targets, self._beside, self.end0 - self.face0
-        verbs[: self.end0 + 1] = np.concatenate(
-            [
-                np.repeat([Verb.MOVE, Verb.ATTACK, Verb.DEFER], t),
-                np.repeat([Verb.SWAP, Verb.BUILD, Verb.BREAK], b),
-                Verb.FACE + np.arange(turns),
-                [Verb.END],
-            ]
-        )
-        cells[: self.end0 + 1] = np.concatenate(
-            [around, around, around, beside, beside, beside, np.full(turns + 1, a)]
-        )
+        named, slots = self._battle_actions()
+        verbs[: self.end0 + 1] = named
+        cells[: self.end0 + 1] = self._np_at[a, slots]
         return verbs, cells
 
     def dice(self, before: TacticsPosition, after: TacticsPosition) -> Dice:
@@ -525,6 +571,36 @@ class TacticsArrays:
         """
         s = _wide(state)
         return jnp.where(s.round == 0, self._placer(s), s.team[self._acting(s)])
+
+    def over(self, state: State) -> jax.Array:
+        """Return whether the game has ended.
+
+        Parameters
+        ----------
+        state : State
+            One state.
+
+        Returns
+        -------
+        Array of bool, shape ()
+            ``state.over``.
+        """
+        return jnp.asarray(state.over)
+
+    def winner(self, state: State) -> jax.Array:
+        """Return the team that won.
+
+        Parameters
+        ----------
+        state : State
+            One state.
+
+        Returns
+        -------
+        Array of int32, shape ()
+            The winner, or -1 while the game runs. Tactics has no draws.
+        """
+        return jnp.asarray(state.winner).astype(jnp.int32)
 
     def legal(self, state: State) -> jax.Array:
         """Return the mask of legal local actions, as `Tactics.legal` finds them.
@@ -637,6 +713,26 @@ class TacticsArrays:
 
     # A step.
 
+    def roll(self, key: ArrayLike) -> Dice:
+        """Return the dice of one step, drawn from a key.
+
+        Parameters
+        ----------
+        key : Array of uint32, shape (2,)
+            A generator's key (`gridzero.batched.root`, `gridzero.batched.stream`).
+
+        Returns
+        -------
+        Dice
+            A d20 per roll a step may make, the team to go first, and a random order of the
+            units. The same key gives the same dice.
+        """
+        return Dice(
+            batched.d(batched.stream(key, 0), 20, (self.n_rolls,)),
+            batched.d(batched.stream(key, 1), 2) - 1,
+            batched.permutation(batched.stream(key, 2), self.n_units),
+        )
+
     def draws(self, state: State) -> Dice:
         """Return the dice of the step a state takes next, from its own stream.
 
@@ -651,12 +747,7 @@ class TacticsArrays:
             Drawn from the stream of the state's seed named by its ply, as the game draws from
             a stream of its seed named by the ply. The same state gives the same dice.
         """
-        key = batched.stream(batched.root(state.seed), 1, state.ply)
-        return Dice(
-            batched.d(batched.stream(key, 0), 20, (self.n_rolls,)),
-            batched.d(batched.stream(key, 1), 2) - 1,
-            batched.permutation(batched.stream(key, 2), self.n_units),
-        )
+        return self.roll(batched.stream(batched.root(state.seed), 1, state.ply))
 
     def step(self, state: State, action: ArrayLike) -> State:
         """Return the state after a legal action, rolling the state's own dice.
@@ -693,10 +784,49 @@ class TacticsArrays:
         State
             The next state, one ply later.
         """
+        return self._applied(state, action, dice)[0]
+
+    def outcomes(self, state: State, action: ArrayLike, dice: Dice) -> tuple[State, jax.Array]:
+        """Return every way a step's attacks may hit and miss, each with its chance.
+
+        Parameters
+        ----------
+        state : State
+            A state not over.
+        action : Array of int, shape ()
+            A local action, legal in ``state``.
+        dice : Dice
+            The step's other draws: who goes first and the order of turns, where the step
+            starts the battle or a round. Its rolls are not read.
+
+        Returns
+        -------
+        states : State
+            The state after each outcome: every array has a leading axis of ``n_outcomes``.
+            In outcome ``o`` the step's ``i``-th roll hits if bit ``i`` of ``o`` is set.
+        chances : Array of float32, shape (n_outcomes,)
+            The probability of each: the product of its rolls' chances, each the share of a
+            d20's faces that hit, or miss. They sum to 1. An outcome that names a roll the
+            step never makes (the unit died first, or the step rolls less) has chance 0.
+        """
+        rolls = jnp.arange(self.n_rolls)
+
+        def one(hits: jax.Array) -> tuple[State, jax.Array]:
+            forced = dice._replace(rolls=jnp.where(hits, 20, 1))
+            after, rolled = self._applied(state, action, forced)
+            made = rolls < rolled.used
+            share = jnp.where(hits, rolled.faces, 20 - rolled.faces).astype(jnp.float32) / 20
+            return after, jnp.where(made, share, jnp.where(hits, 0.0, 1.0)).prod()
+
+        return jax.vmap(one)(self._hits)
+
+    def _applied(self, state: State, action: ArrayLike, dice: Dice) -> tuple[State, _Rolled]:
+        """Return the state after a legal action, and the rolls the step made of its dice."""
         s = _wide(state)
         action = jnp.asarray(action, jnp.int32)
         dice = Dice(*(jnp.asarray(draw, jnp.int32) for draw in dice))
-        battle, deployed = self._battle(s, action, dice), self._deploy(s, action, dice)
+        deployed = self._deploy(s, action, dice)
+        battle, rolled = self._battle(s, action, dice)
         after = jax.tree.map(lambda a, b: jnp.where(s.round == 0, a, b), deployed, battle)
         gone = after.cell < 0  # a slot without a unit holds the defaults
         cleared = {
@@ -704,7 +834,8 @@ class TacticsArrays:
             for name, (_, default) in _UNITS.items()
         }
         after = after._replace(**cleared, ply=s.ply + 1)
-        return State(*(value.astype(_DTYPES[name]) for name, value in after._asdict().items()))
+        after = State(*(value.astype(_DTYPES[name]) for name, value in after._asdict().items()))
+        return after, rolled._replace(used=jnp.where(s.round == 0, 0, rolled.used))
 
     def _deploy(self, s: State, action: jax.Array, dice: Dice) -> State:
         """Place a unit for the team deploying, and start the battle after the last one."""
@@ -726,8 +857,11 @@ class TacticsArrays:
             round=jnp.where(starts, 1, 0),
         )
 
-    def _battle(self, s: State, action: jax.Array, dice: Dice) -> State:
-        """Carry out the acting unit's action and finish the step, as `Tactics.step` in battle."""
+    def _battle(self, s: State, action: jax.Array, dice: Dice) -> tuple[State, _Rolled]:
+        """Carry out the acting unit's action and finish the step, as `Tactics.step` in battle.
+
+        Returns the state and the rolls the step made.
+        """
         game, near, none = self.game, self.near, self.n_units
         u = self._acting(s)
         start, facing = s.cell[u], s.facing[u]
@@ -780,7 +914,7 @@ class TacticsArrays:
             s = s._replace(facing=turned.at[b].set((toward + 3) % 6, mode="drop"))
 
         # The tiles units enter, one at a time: each springs the attacks deferred onto it.
-        used = jnp.int32(0)
+        rolled = _Rolled(dice.rolls, jnp.int32(0), jnp.zeros(self.n_rolls, jnp.int32))
         for entry in range(self._entries):
             here, there = route[min(entry, self._steps)], route[min(entry + 1, self._steps)]
             walks = moves & (entry < length) & (s.cell[u] >= 0)
@@ -795,22 +929,22 @@ class TacticsArrays:
                 s = s._replace(facing=s.facing.at[mover].set(faces, mode="drop"))
             enters = walks | (swaps & (entry < 2))
             who = jnp.where(swaps & (entry == 1), partner, u)
-            s, used = self._spring(s, who, enters, dice.rolls, used)
+            s, rolled = self._spring(s, who, enters, rolled)
         if game.turn_on_move:  # a walk ends facing the way it went, start to goal
             walked = jnp.where(moves & (s.cell[u] >= 0), u, none)
             s = s._replace(facing=s.facing.at[walked].set(near.turned[goal, facing], mode="drop"))
 
         other = jnp.where(attacks, holds[tile], u)
-        s, used = self._attack(s, u, other, attacks, dice.rolls, used, deferred=False)
-        return self._next(s, u, dice)
+        s, rolled = self._attack(s, u, other, attacks, rolled, deferred=False)
+        return self._next(s, u, dice), rolled
 
     def _spring(
-        self, s: State, who: jax.Array, on: jax.Array, rolls: jax.Array, used: jax.Array
-    ) -> tuple[State, jax.Array]:
+        self, s: State, who: jax.Array, on: jax.Array, rolled: _Rolled
+    ) -> tuple[State, _Rolled]:
         """Fire the attacks enemy archers deferred onto the tile of unit ``who``, if ``on``.
 
         Archers fire in order of their cells, each once, if the tile is within its reach and
-        sight, until the unit dies. Returns the state and the rolls used so far.
+        sight, until the unit dies. Returns the state and the rolls made so far.
         """
         near, none = self.near, self.n_units
         tile = s.cell[who]
@@ -823,8 +957,8 @@ class TacticsArrays:
             seen = batched.clear(near, s.wall, at)[jnp.minimum(way, near.size - 1)]
             fires = waits[archer] & (s.cell[who] >= 0) & seen & (way < self._reach[s.kind[archer]])
             s = s._replace(watch=s.watch.at[jnp.where(fires, archer, none)].set(-1, mode="drop"))
-            s, used = self._attack(s, archer, who, fires, rolls, used, deferred=True)
-        return s, used
+            s, rolled = self._attack(s, archer, who, fires, rolled, deferred=True)
+        return s, rolled
 
     def _attack(
         self,
@@ -832,22 +966,21 @@ class TacticsArrays:
         attacker: jax.Array,
         target: jax.Array,
         on: jax.Array,
-        rolls: jax.Array,
-        used: jax.Array,
+        rolled: _Rolled,
         *,
         deferred: bool,
-    ) -> tuple[State, jax.Array]:
+    ) -> tuple[State, _Rolled]:
         """Roll one attack between two units, if ``on``, as `Tactics._attack` does.
 
         A target bracing against the charge strikes first, and may kill the attacker. Returns
-        the state and the rolls used so far.
+        the state and the rolls made so far.
         """
         atk, defense, braced = self._stats(s, attacker, target, deferred=deferred, strike=False)
         if not deferred:
             back, guard, _ = self._stats(s, target, attacker, deferred=False, strike=True)
-            s, used = self._blow(s, target, attacker, on & braced, back, guard, rolls, used)
+            s, rolled = self._blow(s, target, attacker, on & braced, back, guard, rolled)
             on = on & (s.cell[attacker] >= 0)
-        return self._blow(s, attacker, target, on, atk, defense, rolls, used)
+        return self._blow(s, attacker, target, on, atk, defense, rolled)
 
     def _blow(
         self,
@@ -857,13 +990,14 @@ class TacticsArrays:
         on: jax.Array,
         atk: jax.Array,
         defense: jax.Array,
-        rolls: jax.Array,
-        used: jax.Array,
-    ) -> tuple[State, jax.Array]:
+        rolled: _Rolled,
+    ) -> tuple[State, _Rolled]:
         """Roll for one blow of given Atk and Def, if ``on``: engage the target, hurt or kill it."""
         game = self.game
-        roll = rolls[jnp.minimum(used, self.n_rolls - 1)]
+        nth = jnp.minimum(rolled.used, self.n_rolls - 1)
+        roll = rolled.rolls[nth]
         needed = game.hit_base - game.hit_step * (atk - defense)
+        faces = jnp.clip(20 - needed, 0, 18) + 1  # the 20, and 2 to 19 from the roll needed
         hit = on & ((roll == 20) | ((roll != 1) & (roll >= needed)))
         hp = s.hp[target]
         damage = jnp.minimum(atk, hp)
@@ -874,7 +1008,9 @@ class TacticsArrays:
             cell=s.cell.at[struck].set(jnp.where(dies, -1, s.cell[target]), mode="drop"),
             engaged=s.engaged.at[struck].set(True, mode="drop"),
         )
-        return s, used + on
+        made = jnp.where(on, nth, self.n_rolls)
+        faces = rolled.faces.at[made].set(faces, mode="drop")
+        return s, _Rolled(rolled.rolls, rolled.used + on, faces)
 
     def _stats(
         self, s: State, attacker: jax.Array, target: jax.Array, *, deferred: bool, strike: bool
@@ -977,6 +1113,29 @@ class TacticsArrays:
         )
 
     # What a network reads.
+
+    def framed(self, state: State) -> jax.Array:
+        """Return where a network scores each local action, in the mover's frame.
+
+        Parameters
+        ----------
+        state : State
+            A state not over.
+
+        Returns
+        -------
+        Array of int32, shape (n_actions,)
+            ``verb * n_cells + cell`` of each local action as the frame of the team to move
+            names it (`Tactics.frame`): for team 1, the opposite tile, and a facing turned half
+            way round. 0 for a local action that names nothing, or a tile off the board.
+        """
+        s = _wide(state)
+        n = self.n_cells
+        team = jnp.clip(self.player(state), 0, 1)
+        tiles = self.near.at[s.cell[self._acting(s)]][self._slot_of]
+        battle = jnp.where(tiles < n, self._verb_in[team] * n + self._cell_in[team, tiles], 0)
+        acting = jnp.zeros(self.n_actions, jnp.int32).at[: battle.shape[0]].set(battle)
+        return jnp.where(s.round == 0, self._deploying[team], acting)
 
     def observe(self, state: State, player: ArrayLike) -> jax.Array:
         """Return what a team sees of a state: `Tactics.observe`, bit for bit.

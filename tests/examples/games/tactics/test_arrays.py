@@ -25,6 +25,7 @@ from examples.games.tactics import (
     small_rules,
 )
 from examples.games.tactics.arrays import Dice, State, TacticsArrays
+from examples.games.tactics.rules import hit_chance
 from tactics_demo import ARCHER, CAPTAIN, ENGINEER, FOOT, KNIGHT, WORKS, piece
 
 RULES = {
@@ -79,8 +80,19 @@ def played(
         return int(rng.choice(legal))
 
     rng = np.random.default_rng(seed)
+
+    def outcome(before, after) -> tuple[int, float]:
+        """A step's hits as bits, and their chance from the Atk and Def of its attacks."""
+        game, which, chance = arrays.game, 0, 1.0
+        attacks = [event for event in after.events if isinstance(event, Attacked)]
+        for nth, event in enumerate(attacks):
+            hit = hit_chance(event.atk, event.defense, game.hit_base, game.hit_step)
+            which += event.hit << nth
+            chance *= hit if event.hit else 1.0 - hit
+        return which, chance
+
     return check_array_game(
-        arrays.game, compiled_, position, choose, rng=rng, plies=plies, watch=watch
+        arrays.game, compiled_, position, choose, rng=rng, plies=plies, watch=watch, outcome=outcome
     )
 
 

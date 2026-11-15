@@ -90,6 +90,9 @@ where the game has 18 verbs times every tile. Stats, caps and bonuses are read f
 `Tactics` value, so a variant by parameters needs no new code; a new mechanic is written twice.
 `Tactics` stays the game: players, ladders and pages read it, and the tests hold the arrays to it
 ply by ply, given its dice. The arrays roll JAX's own dice, so they don't repeat a game of a seed.
+For a search they also list a step's outcomes: every way its attacks may hit and miss (8 at most
+under the default rules: three archers firing at a walk), each with its exact chance, so that the
+search in arrays (`gridzero.agents.zero_arrays`) weighs a hit against a miss instead of rolling.
 
 ## Players
 
@@ -154,6 +157,30 @@ Everything dated before 2026-11-10 was measured without fog (`fog=False`), which
   under fog, `benchmarks/tactics.py` that day): 4,000 a second. A network of the size we train
   answers 58,000 positions a second on the same GPU (102,000 in bf16), so the rules are no longer
   what a search waits for. They compile in 3 to 5 seconds, and a position is 854 bytes.
+- **The search on them** (`gridzero.agents.zero_arrays`, the same day and machine; the network of
+  the PPO warm-up, 64 channels and 6 blocks, in bfloat16 through `NetArrayEvaluator`):
+  - It is `agents.zero`'s search. Given the same network and the same Gumbel noise, 25 positions
+    from deployment to late battle, one of them a belief under fog, at 32 and at 200 simulations:
+    the same visits and the same action on every one, and policies, values and each action's
+    mean value to 2e-5 (float32 against float64), against `agents.zero`'s own tree with only its
+    dice changed from rolled to weighed.
+  - What weighing changes: on 48 battle positions where an attack is on offer, at 128
+    simulations without noise, it picks the action `agents.zero` picks with rolled dice on 47,
+    its value of the position lies 0.003 away and its policy 0.016 (total variation). Two
+    searches of `agents.zero` with different dice lie 0.0025 and 0.022 apart: weighing is within
+    the noise of rolling, and has none of its own.
+  - Simulations a second, each a walk down the tree, the rules, an observation and the network:
+
+    | Decisions at once | 64 simulations | 256 simulations | JAX's memory |
+    |---|---|---|---|
+    | 1,024 | 100,000 | 99,000 | 1.4 GB |
+    | 2,048 | | 106,000 | 1.9 GB |
+    | 4,096 | 111,000 | 108,000 | 3.5 GB |
+
+    The network alone answers 128,000 to 133,000 positions a second, so the search costs a fifth
+    on top of it. `agents.zero` on this game did 2,200 simulations a second in 24 processes
+    around one GPU server. 4,096 decisions at 256 simulations take 9.7 seconds: 400,000 searched
+    decisions in a quarter of an hour. A search compiles in 17 to 26 seconds.
 - **Routes cost whole numbers since that day** (`game.py`): a step 1024 and a watched tile 1 more,
   where it was 1 and 0.001. Sums of such fractions depend on their order from 6 steps on, so among
   routes with as many watched tiles the tie could go to rounding instead of the lowest cell. No
@@ -446,5 +473,5 @@ experiment can make any more. `zero_check` still plays saved full-size weights.
 | `lessons.py` | `Lessons`, `lessons_of`, `positions_of`, `teach`: a search player's games kept to fit to |
 | `fit.py` | `fit`, `cases_of`, `FitScore`, `playing`: a code player's constants fit to those games and scored, and those that play |
 | `match.py` | `EVAL_SEED`, `small_rules`, `summarize`, `balance` |
-| `arrays.py` | `TacticsArrays`, `State`, `Dice`: the rules as JAX arrays, for batches of games on the GPU |
+| `arrays.py` | `TacticsArrays`, `State`, `Dice`: the rules as JAX arrays, for batches of games on the GPU, with a step's outcomes and their chances for a search |
 | `text.py`, `pictures.py` | Events and summaries as text; boards drawn as hexes |
