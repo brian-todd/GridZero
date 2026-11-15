@@ -37,6 +37,11 @@ class Operator(NamedTuple):
     (n_cells, back_size)."""
     back_weight: jax.Array | None
     """The weights of the transpose's slots: float32, shape (n_cells, back_size), or None."""
+    sources: jax.Array
+    """The cell each edge leaves, in the order of `core.CellGraph`'s edges (by source, then by
+    target): int32, shape (n_edges,). What a rate per edge is aligned with."""
+    targets: jax.Array
+    """The cell each edge enters, the neighbor: int32, shape (n_edges,)."""
 
 
 def operator(op: NeighborOperator) -> Operator:
@@ -61,7 +66,9 @@ def operator(op: NeighborOperator) -> Operator:
         raise TypeError(f"op must be a NeighborOperator, got {type(op).__name__}")
     idx, weight = _tables(op)
     back, back_weight = _tables(op.transpose())
-    return Operator(idx, weight, back, back_weight)
+    sources = jnp.asarray(op.graph.sources.astype(np.int32))
+    targets = jnp.asarray(op.graph.indices.astype(np.int32))
+    return Operator(idx, weight, back, back_weight, sources, targets)
 
 
 def _tables(op: NeighborOperator) -> tuple[jax.Array, jax.Array | None]:

@@ -52,15 +52,41 @@ root, stream, d, permutation
     A generator's key from a seed, the key of a stream of it (a step, a phase), rolls of a
     die, and a random order.
 
+States
+------
+Fields, fields, state
+    A `core.State`'s fields as arrays keyed by field, made of a state and made back into one.
+
+Intents
+-------
+Assign, Flow, Spread, Source, Claim
+    What a rule in arrays proposes: `core`'s intents, with arrays for values.
+resolve
+    Apply a rule's intents to the fields it read: `core.resolve`.
+
+The loop
+--------
+Phase, phase, Context
+    A rule in arrays with what it writes and the neighborhoods it reads, declared as
+    `core.phase` declares one, and what a rule gets besides the fields.
+Simulation
+    The phases of a model on a space: a step and a run of one state's fields, for
+    ``jax.vmap`` to run a batch of seeds or parameters.
+
 Games
 -----
+ArrayRules
+    Protocol: a game's rules as functions of one state of arrays, which a search or self-play
+    runs in batches: legal actions, a step given its dice, a step's outcomes with their
+    chances, observations.
 ArrayGame
-    Protocol: what a game's rules as arrays provide, and how they map onto the game they
-    copy.
+    Protocol: such rules, and how they map onto the game they copy.
 """
 
 from gridzero.batched.dice import d, permutation, root, stream
-from gridzero.batched.games import ArrayGame
+from gridzero.batched.games import ArrayGame, ArrayRules
+from gridzero.batched.intents import Assign, Claim, Flow, Source, Spread, resolve
+from gridzero.batched.loop import Context, Phase, Simulation, phase
 from gridzero.batched.operators import Operator, gather, operator, pull, push
 from gridzero.batched.queries import (
     FAR,
@@ -74,25 +100,40 @@ from gridzero.batched.queries import (
     steps,
     steps_around,
 )
+from gridzero.batched.states import Fields, fields, state
 
 __all__ = [
     "FAR",
     "ArrayGame",
+    "ArrayRules",
+    "Assign",
+    "Claim",
+    "Context",
+    "Fields",
+    "Flow",
     "Operator",
     "Patch",
+    "Phase",
+    "Simulation",
+    "Source",
+    "Spread",
     "clear",
     "d",
+    "fields",
     "gather",
     "operator",
     "patch",
     "path_around",
     "permutation",
+    "phase",
     "pull",
     "push",
     "reach",
+    "resolve",
     "root",
     "sight",
     "slot",
+    "state",
     "steps",
     "steps_around",
     "stream",

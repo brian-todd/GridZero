@@ -36,14 +36,18 @@ src/gridzero/game/    games beside simulations: the Game and Player protocols, P
                       series, records, replay, tally, ladder, fairness, board helpers (boards.py)
 src/gridzero/agents/  players of any game: a uniform one, Observable, Revealable, Learnable and
                       Frame, the AlphaZero search (zero.py), its network (net.py) and training
-                      (zero_train.py), MuZero's world model (muzero.py, muzero_net.py,
+                      (zero_train.py), the same search as arrays, for batches of decisions on
+                      the GPU (zero_arrays.py), MuZero's world model (muzero.py, muzero_net.py,
                       muzero_train.py), imitation (imitate.py), PPO (ppo.py), exact values of
                       small games (exact.py); Torch only in the networks and the training
-                      modules, which the package doesn't import
+                      modules, and JAX only in zero_arrays.py, none of which the package
+                      imports
 src/gridzero/batched/ core for many states at once, in JAX: operators (operators.py), moves
                       on any space and sight and paths around a cell of a lattice
-                      (queries.py), dice (dice.py), the ArrayGame protocol (games.py); nothing
-                      else in the package imports it
+                      (queries.py), dice (dice.py), a state's fields as arrays (states.py),
+                      intents and their resolver (intents.py), the loop (loop.py), the
+                      ArrayRules and ArrayGame protocols (games.py); only
+                      agents/zero_arrays.py imports it
 src/gridzero/worlds/  Planet (planet.py), optional terrain (terrain.py), noise and relief
                       (noise.py)
 src/gridzero/         render.py (globes, maps, flat maps, cell polygons, text)
@@ -60,7 +64,8 @@ tests/                mirrors src/ and examples/. Shared fixtures and factories 
                       conftest.py, shared State classes in demo.py, the fake game and the checks
                       every game runs in game_demo.py, those every simulation's model runs in
                       model_demo.py, the test game of agents and check_learnable in
-                      agents_demo.py, the check every game's array rules run in
+                      agents_demo.py, the checks every game's array rules and every
+                      simulation's phases in arrays run, and a fake game as arrays, in
                       batched_demo.py, and helpers the Tactics tests import in tactics_demo.py
 benchmarks/           timing scripts, run as modules (python -m benchmarks.bench): bench.py times
                       both paths and the step target
@@ -86,8 +91,9 @@ taskset -c 4 uv run python -m benchmarks.bench   # timings, pinned to one perfor
 - Add dependencies only with `uv add` or `uv add --dev`, and **ask before adding one**.
 - We build on what is already locked: NumPy, SciPy, Numba, Matplotlib, pandas and
   scikit-learn. Torch and CUDA are available, and JAX (`jax[cuda13]`, added on 2026-11-13 for
-  rules and searches that run in batches on the GPU): only `gridzero.batched` and a model's
-  array rules (`examples/games/tactics/arrays.py`) import it. GPU work in `core` is deferred;
+  rules and searches that run in batches on the GPU): only `gridzero.batched`, the search on
+  it (`agents/zero_arrays.py`) and a model's array rules (an example's `arrays.py`) import
+  it. GPU work in `core` is deferred;
   the networks of `agents` train on the GPU (RTX 3080, 10 GB: mind the memory) and play on the
   CPU. JAX takes most of the GPU's memory when it starts: set
   `XLA_PYTHON_CLIENT_PREALLOCATE=false` where Torch shares the GPU. The tests run JAX on the
@@ -301,6 +307,29 @@ def pull(x: NDArray[np.float32], op: NeighborOperator) -> NDArray[np.float32]:
     only gather. The complete rules compile in 3 to 5 seconds.
   - Converting a state to JAX arrays costs tens of microseconds a field on the GPU: keep
     states as NumPy arrays (JAX takes them as they are), stack them, and move a batch once.
+- **The search in arrays** (`agents.zero_arrays`, the same machine, a network of 64 channels
+  and 6 blocks in bfloat16, 2026-11-14): 100,000 to 110,000 simulations a second for 1,024 to
+  4,096 decisions at once, at 64 or at 256 simulations each, where the network alone answers
+  130,000 positions: the tree, the rules and the observations cost a fifth on top.
+  `agents.zero` in 24 processes around one GPU server did 2,200. 4,096 trees of 257 nodes take
+  3.5 GB, and a search compiles in 17 to 26 seconds.
+  - **Keep a tree out of a loop's carry.** Under `vmap` a `while_loop` selects its whole carry
+    at every iteration. Backing values up through parent pointers, the tree in the carry, cost
+    three times the network at 256 simulations (32,000 a second). Recording the path on the
+    way down and adding along it in one scatter costs nothing that grows with the tree.
+  - Donate the trees' buffers to the compiled step (`jax.jit(..., donate_argnums=0)`), or
+    every simulation copies them. Donate only where the result has the same shapes: JAX warns
+    of buffers it could not reuse, and the tests make warnings errors.
+  - A step's outcomes are its rules run once per pattern of hits (8 for Tactics), every
+    simulation: with the forced steps and the observation, still a small part of the fifth.
+- **A simulation in arrays** (`batched.Simulation`, the same machine, 2026-11-14; the planet's
+  evolution, 32 traits on 2,562 cells, 200 steps a run): 85,000 to 99,000 steps a second for 4
+  to 16 planets at once, 64,000 for 64 and 30,000 for 1,024, where `core` does 590 on one core
+  and 3,100 at best on the whole CPU (8 processes; 24 do 1,400, each run ten times slower
+  than alone: its arrays of 32 x 2,562 float64 are bound by memory, not by cores). So a batch
+  on the GPU is about 30 times the CPU, and a small batch is the fastest: the GPU is bound by
+  memory too, each step passing over every run's arrays some twenty times. One run alone
+  already does 45,000 steps a second there; a model of a few hundred cells would not gain.
 
 ## Grids: facts worth knowing
 
@@ -396,8 +425,10 @@ def pull(x: NDArray[np.float32], op: NeighborOperator) -> NDArray[np.float32]:
   - **fast path equals reference:** test modules of operations with fast paths run every test
     on both paths, with `pytestmark = pytest.mark.usefixtures("each_impl")`. `test_kernels.py`
     compares the two paths' outcomes (results bit for bit, or the same error) on hard inputs,
-  - **arrays equal the reference:** a function of `gridzero.batched` against `core`'s, and a
+  - **arrays equal the reference:** a function of `gridzero.batched` against `core`'s, a
     game's array rules against the game with `check_array_game` (`tests/batched_demo.py`),
+    a simulation's phases in arrays against its model step by step with `check_array_model`,
+    and the search in arrays against `agents.zero`'s tree, given the same judge and noise,
   - **determinism:** the same seed gives identical arrays, and different seeds give different
     arrays,
   - **bounds:** no negative amounts after resolution, and no flow into masked cells.
@@ -557,9 +588,30 @@ The rules below are the ones to keep in mind while writing code.
     from the game's own value, so parameters stay in one place): a `State` of arrays in fixed
     shapes, local actions small enough to keep per node of a search, converters both ways, and
     the game's dice read back from the positions it made. Its tests run `check_array_game`,
-    which holds it to the game ply by ply, and whole games of every rule variant.
-  - No new way to describe anything: spaces, neighborhoods and fields keep their meaning.
-    Tables come from `core`'s public functions, never from a second copy of the geometry.
+    which holds it to the game ply by ply, and whole games of every rule variant. What runs in
+    batches asks only for its JAX half, `ArrayRules`.
+  - **Dice a search should weigh are outcomes, not draws.** `outcomes(state, action, dice)`
+    lists the states a step may lead to with their exact chances (an attack that hits or
+    misses), and reads from `dice` only what has too many outcomes to list (an order of
+    turns). The search in arrays (`agents.zero_arrays`) visits a step's outcomes in
+    proportion to their chances, so an action's value is its expectation, and takes forced
+    steps (one legal action) without a node. It is `agents.zero`'s search otherwise, and
+    tested against it.
+  - **The network stays in Torch.** A search in arrays hands each batch of observations to an
+    evaluator through DLPack, where it lies on the GPU (`net.NetArrayEvaluator`), and reads
+    the scores back the same way: one network definition, one set of weights.
+  - **A simulation's array rules are its phases once more,** in a class beside the model
+    (`arrays.py`: `EvolutionArrays(model).phases()`, built from the model's own value). A rule
+    is declared with `batched.phase` as `core.phase` declares one, reads `batched.Fields`
+    (the state's arrays keyed by field, `s[WorldState.people]`, a JAX tree that stacks) and
+    returns `batched`'s intents, which `batched.resolve` applies as `core.resolve` does.
+    `batched.Simulation(space, phases)` steps one run; `jax.vmap` runs the batch. The start is
+    the model's (`batched.fields(model.start(space, seed))`). What a traced rule cannot do
+    is written another way: a phase that returns `None` before some step returns its intent
+    with nothing in it, and a derived field is computed again from its fields.
+  - No new way to describe anything: spaces, neighborhoods, fields, intents and phases keep
+    their meaning and their names. Tables come from `core`'s public functions, never from a
+    second copy of the geometry.
 - **Tilings are data:** adding a tiling means a new `_Tiling` record in `core/lattice.py`, not a
   new class.
 - **Simulations and games are data:** a frozen dataclass of parameters builds the state, the

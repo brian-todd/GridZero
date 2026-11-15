@@ -39,6 +39,34 @@ the temperature. It saves `{prefix}_map.png` and `{prefix}_history.png` (by defa
 halfway through the run; `1e-4` is about a tenth of the speed at which one place's population
 can't keep up, and the cold species die out first.
 
+## As arrays
+
+`arrays.py` has the same phases once more for JAX (`EvolutionArrays(model).phases()`, on
+`gridzero.batched`), to run many planets at once on a GPU: other seeds, or other parameters.
+
+```python
+import jax, numpy as np
+from gridzero import batched
+from gridzero.core import icosphere
+from examples.simulations.population_evolution import Evolution
+from examples.simulations.population_evolution.arrays import EvolutionArrays, spectrum
+
+model, space = Evolution(), icosphere(16)
+sim = batched.Simulation(space, EvolutionArrays(model).phases())
+starts = [batched.fields(model.start(space, seed)) for seed in range(16)]
+planets = jax.tree.map(lambda *xs: np.stack(xs), *starts)
+run = jax.jit(jax.vmap(lambda fields: sim.run(fields, batched.root(0), 1000, spectrum)))
+ends, spectra = run(planets)  # spectra: (16 planets, 1000 steps, 32 traits)
+```
+
+`Evolution` stays the model: the experiment and the tests read it, and the tests hold the
+arrays to it step by step (`check_array_model`): every field within 1e-4 of its largest value
+over 40 steps, on a globe and on a map, with and without warming. Amounts are float32 there.
+
+Measured on 2026-11-14 (RTX 3080, JAX 0.12.0.1, i9-12900K; 2,562 cells, 200 steps a run), in
+steps a second: 85,000 to 99,000 for 4 to 16 planets at once, 64,000 for 64, 30,000 for 1,024;
+`Evolution` on `core` does 590 on one core and 3,100 at best on the whole CPU (8 processes).
+
 ## What it shows
 
 Measured on 2026-10-31 with the defaults, on a continent of 620 cells:

@@ -42,7 +42,8 @@ obvious way to write a model, a game, a player and an experiment.
   Self-play runs in actor processes around one GPU inference server.
 - **Rules as arrays:** `batched` runs `core`'s operators and queries in JAX, for thousands of
   states at once on a GPU. A game's rules written on it are held to the game ply by ply, given
-  its dice: Tactics' run at millions of steps a second.
+  its dice: Tactics' run at millions of steps a second, and the AlphaZero search on them at
+  100,000 simulations a second, the Torch network included.
 - **Pictures:** globes and maps of planets, flat maps of boards, a viewer that steps through a
   game in a window or saves a GIF, and training curves that refresh while a run trains.
 
@@ -154,6 +155,17 @@ enforced, so a rule can't break them.
 it checks that `start` takes its state's kind of space, that a seed gives the same bits on
 both implementations, and that amounts stay finite and non-negative. The model's own tests
 then check what it claims to do.
+
+**Many runs at once** are the same model written once more as arrays. `gridzero.batched` has
+the loop's parts under their own names, for JAX: a rule declared with `batched.phase` reads
+`batched.Fields` (the state's arrays, keyed by field: `s[LifeState.alive]`) and returns
+`batched.Assign`, `Flow`, `Spread`, `Source` or `Claim`, and `batched.Simulation(space,
+phases)` steps one run, so that `jax.vmap` runs a thousand seeds or parameters together on a
+GPU. Life's rule becomes `n = batched.pull(alive, ctx.hoods["near"])` and the same line of
+logic, and equals the model bit for bit; amounts are float32 there, and follow the model to
+that precision. The model stays the reference, and its tests hold the arrays to it step by
+step (`check_array_model`). [`population_evolution`](examples/simulations/population_evolution)
+has both.
 
 ## A first game
 
@@ -376,8 +388,8 @@ A few principles hold throughout:
 | Package | What it does |
 |---|---|
 | `game` | The `Game` and `Player` protocols, positions and actions, `play`, `series` in processes, records and `replay`, `tally`, `ladder` and `fairness`, and helpers that make a board fair (`symmetric`, `zones`, `joined`) |
-| `agents` | Players of any game: `UniformPlayer`, Gumbel AlphaZero search with chance nodes (`AlphaZeroPlayer`), its residual network and training loop on the GPU (`net`, `zero_train`), MuZero's search over a learned world model (`muzero`, `muzero_net`, `muzero_train`), imitation and PPO, and exact values of small games (`exact`). Only the networks and their training import Torch, and the package doesn't import them |
-| `batched` | `core` for many states at once, in JAX: `pull`, `push` and `gather` through any compiled neighborhood, moves on any space (`steps`, `reach`), sight and paths around a cell of a lattice from tables (`patch`, `sight`, `path_around`), dice, and the `ArrayGame` protocol of a game's rules as arrays. Integers equal `core`'s bit for bit and floats to float32's precision. Nothing else imports it |
+| `agents` | Players of any game: `UniformPlayer`, Gumbel AlphaZero search with chance nodes (`AlphaZeroPlayer`), its residual network and training loop on the GPU (`net`, `zero_train`), MuZero's search over a learned world model (`muzero`, `muzero_net`, `muzero_train`), imitation and PPO, and exact values of small games (`exact`). The same search runs as arrays for batches of decisions on a GPU (`zero_arrays`, in JAX), weighing a step's dice by their exact chances and handing its leaves to the Torch network where they lie. Only the networks and their training import Torch, and the package doesn't import them |
+| `batched` | `core` for many states at once, in JAX: `pull`, `push` and `gather` through any compiled neighborhood, moves on any space (`steps`, `reach`), sight and paths around a cell of a lattice from tables (`patch`, `sight`, `path_around`), dice, and the protocols of a game's rules as arrays (`ArrayRules`, which a search runs in batches, and `ArrayGame`, which ties them to the game they copy). Integers equal `core`'s bit for bit and floats to float32's precision. Only `agents.zero_arrays` imports it |
 | `worlds` | A `Planet` (`generate_planet`) has continents, seas and a climate, with land, coasts and landmasses, on an icosphere or projected onto a lattice as its map. `generate_terrain` makes continents and seas for any 2-D lattice, such as a board for a game, and one seed gives the same continents at every resolution |
 | `render` | `globe` and `world_map` (Mollweide or equirectangular) picture a spherical mesh as images, and `flat_map` a 2-D lattice, such as a board or a planet's map, with `colorize`, `mix` and `over` for per-cell colors; `Browser` steps a figure through its frames, such as the positions of a game |
 
