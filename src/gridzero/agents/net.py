@@ -5,7 +5,8 @@ per action, in the player's frame, and the value of the position for the player,
 (lost) to 1 (won). Its body is a stack of residual blocks of lattice convolutions
 (`LatticeConv`), so it sees what is near each cell the way the board connects them, wherever
 the cell is: squares and hexes. `NetPlayer` plays with it, and `NetEvaluator` judges positions
-for the AlphaZero player (`agents.zero.AlphaZeroPlayer`), many at a time. It was first written
+for the AlphaZero player (`agents.zero.AlphaZeroPlayer`), many at a time, as `NetArrayEvaluator`
+does for the search in arrays (`agents.zero_arrays.ArraySearch`). It was first written
 for Tactics (T7), whose saved weights it still loads. `CellConv` convolves over the neighbors
 of any space, such as a planet, for networks of games off the lattice (`agents.muzero_net`).
 
@@ -357,6 +358,48 @@ class NetEvaluator:
         return judgements(
             game, scores.double().cpu().numpy(), value.double().cpu().numpy(), legal, players
         )
+
+
+@dataclass(frozen=True, eq=False)
+class NetArrayEvaluator:
+    """Judges observations for a search in arrays with a `PolicyNet`, where they lie.
+
+    An `agents.zero_arrays.ArrayEvaluator`. The observations of a batch come as one array of
+    another library (JAX's), shared by DLPack without a copy when it is on the network's
+    device, and the scores and values go back as tensors, which that library reads the same
+    way. On a GPU the network runs in bfloat16, as training does.
+
+    Parameters
+    ----------
+    net : PolicyNet
+        The network. It is put in evaluation mode on each call.
+    """
+
+    net: PolicyNet
+
+    def __call__(self, obs: object, /) -> tuple[Tensor, Tensor]:
+        """Return the network's scores and values of a batch of observations.
+
+        Parameters
+        ----------
+        obs : array of uint8, shape (batch, n_planes, n_cells)
+            Observations as bytes (`as_input`), each in its player's frame: any array that
+            exports DLPack.
+
+        Returns
+        -------
+        scores : Tensor of float32, shape (batch, n_verbs * n_cells)
+            A score per action ``verb * n_cells + cell``, in the player's frame, before
+            masking illegal ones.
+        values : Tensor of float32, shape (batch,)
+            Each position's value for its player, in [-1, 1].
+        """
+        device = next(self.net.parameters()).device
+        self.net.eval()
+        gpu = device.type == "cuda"
+        with torch.no_grad(), torch.autocast(device.type, dtype=torch.bfloat16, enabled=gpu):
+            scores, value = self.net(as_input(torch.from_dlpack(obs).to(device)))
+        return scores.float().flatten(1), value.float()
 
 
 def observations[P: Position[State, object]](

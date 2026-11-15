@@ -7,6 +7,7 @@ from gridzero.agents import AlphaZeroPlayer, UniformPlayer, self_play
 from gridzero.agents.net import (
     CellConv,
     LatticeConv,
+    NetArrayEvaluator,
     NetEvaluator,
     NetPlayer,
     PolicyNet,
@@ -180,6 +181,23 @@ def test_a_net_evaluator_gives_log_priors_on_the_board_and_player_zeros_values()
         np.testing.assert_array_equal(got, want)
     np.testing.assert_array_equal(values, want_values)
     assert values[1] == pytest.approx((1 - float(value[1])) / 2)  # player 1's value, turned
+
+
+@pytest.mark.parametrize("library", ["numpy", "jax"])
+def test_a_net_array_evaluator_reads_observations_of_another_library(library):
+    import jax.numpy as jnp  # here only: the other tests of networks need no JAX
+
+    net = small_net()
+    positions = [GAME.start(0), GAME.step(GAME.start(0), (PLACE, 0)), GAME.start(3)]
+    _, obs = observations(GAME, positions)
+    scores, value = NetArrayEvaluator(net)(obs if library == "numpy" else jnp.asarray(obs))
+    with torch.no_grad():
+        want_scores, want_value = net(torch.from_numpy(obs).float() / 255)
+    assert scores.shape == (3, net.n_verbs * GAME.space.n_cells)
+    assert scores.dtype == value.dtype == torch.float32
+    torch.testing.assert_close(scores, want_scores.flatten(1), rtol=0, atol=0)
+    torch.testing.assert_close(value, want_value, rtol=0, atol=0)
+    np.testing.assert_array_equal(np.asarray(jnp.from_dlpack(value)), want_value.numpy())
 
 
 def test_a_net_evaluator_guides_self_play_on_squares():
