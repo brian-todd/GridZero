@@ -75,6 +75,7 @@ def test_the_best_action_of_a_spread_policy_is_its_largest_first_on_ties():
         policy=np.array([0.2, 0.5, 0.3, 0.5, 0.5], dtype=np.float32),
         start=np.array([0, 3, 5]),
         outcome=np.zeros(2, dtype=np.float32),
+        root=np.full(2, np.nan, dtype=np.float32),
         game=np.zeros(2, dtype=np.int64),
         ply=np.zeros(2, dtype=np.int64),
     )

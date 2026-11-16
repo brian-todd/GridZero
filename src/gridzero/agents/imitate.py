@@ -104,6 +104,7 @@ class _Collect[G: Learnable[Any], P: Position[State, object]]:
             policy=policy,
             start=start,
             outcome=outcome,
+            root=np.full(n, np.nan, dtype=np.float32),
             game=np.full(n, self.seed, dtype=np.int64),
             ply=np.array(recorder.plies, dtype=np.int64),
         )

@@ -225,6 +225,10 @@ class Experience:
         Where each decision's policy starts in ``policy``, and its end.
     outcome : ndarray of float32, shape (n,)
         1 if the deciding player went on to win, -1 if it lost, 0 for a draw.
+    root : ndarray of float32, shape (n,)
+        The search's value of the decision's position for the deciding player, in [-1, 1]:
+        the mean of the evaluator's value of the root and every simulation's. NaN where no
+        search judged the decision (imitation, PPO).
     game : ndarray of int64, shape (n,)
         The seed of the game each decision was taken in.
     ply : ndarray of int64, shape (n,)
@@ -236,11 +240,36 @@ class Experience:
     policy: NDArray[np.float32]
     start: NDArray[np.int64]
     outcome: NDArray[np.float32]
+    root: NDArray[np.float32]
     game: NDArray[np.int64]
     ply: NDArray[np.int64]
 
     def __len__(self) -> int:
         return int(self.outcome.size)
+
+    def target(self, root_value: float) -> NDArray[np.float32]:
+        """Return the value each decision is trained toward: the outcome blended with the root.
+
+        ``(1 - root_value) * outcome + root_value * root``, and the outcome alone where no
+        search judged the decision. The outcome is one sample of how a game went on, through
+        every draw after the decision; the search's value is an estimate of the position
+        itself, steadier but built on the network's own values. A blend of the two learns
+        where the outcome alone is too noisy (Tactics under fog, 2026-11-16: 0.5 took a
+        network stalled at greedy's level past the MCTS teacher).
+
+        Parameters
+        ----------
+        root_value : float
+            The share taken from the search's value, in [0, 1].
+
+        Returns
+        -------
+        ndarray of float32, shape (n,)
+            The targets, in [-1, 1].
+        """
+        share = np.float32(root_value)
+        blend = (1 - share) * self.outcome + share * self.root
+        return np.where(np.isnan(self.root), self.outcome, blend).astype(np.float32)
 
     def take(self, index: NDArray[np.integer] | NDArray[np.bool_]) -> Experience:
         """Return the decisions at ``index``, an array of positions or a boolean mask.
@@ -266,6 +295,7 @@ class Experience:
             self.policy[shift + np.arange(start[-1])],
             start,
             self.outcome[index],
+            self.root[index],
             self.game[index],
             self.ply[index],
         )
@@ -292,6 +322,7 @@ class Experience:
             np.concatenate([p.policy for p in parts]),
             np.concatenate(start),
             np.concatenate([p.outcome for p in parts]),
+            np.concatenate([p.root for p in parts]),
             np.concatenate([p.game for p in parts]),
             np.concatenate([p.ply for p in parts]),
         )
@@ -324,8 +355,8 @@ def self_play[G: Learnable[Any], P: Position[State, object]](
     evaluator (`net.NetEvaluator` on a GPU) sees as many positions per call as games still
     running. Each searched decision is kept with probability ``keep``: the observation, the
     legal actions and the improved policy in the deciding player's frame (`Learnable.frame`),
-    and later how the game ended for that player. Single legal actions are played without a
-    search and never kept.
+    the search's value of the position for that player, and later how the game ended for it.
+    Single legal actions are played without a search and never kept.
 
     Game ``seed`` starts from ``game.start(seed)`` and searches with its own generator (a
     stream of the seed), so a game plays the same whatever other games run beside it, given an
@@ -387,6 +418,7 @@ def _empty(game: Learnable[Any]) -> Experience:
         np.zeros(0, dtype=np.float32),
         np.zeros(1, dtype=np.int64),
         np.zeros(0, dtype=np.float32),
+        np.zeros(0, dtype=np.float32),
         np.zeros(0, dtype=np.int64),
         np.zeros(0, dtype=np.int64),
     )
@@ -404,6 +436,7 @@ class _Running[P: Position[State, object]]:
     obs: list[NDArray[np.uint8]] = field(default_factory=list)
     legal: list[NDArray[np.uint8]] = field(default_factory=list)
     policy: list[NDArray[np.float32]] = field(default_factory=list)
+    roots: list[float] = field(default_factory=list)
     movers: list[int] = field(default_factory=list)
     plies: list[int] = field(default_factory=list)
 
@@ -418,7 +451,7 @@ class _Running[P: Position[State, object]]:
                     return leaf
                 result = self.search.result()
                 if self.rng.random() < keep:
-                    self._keep(game, self.search.legal, result.policy)
+                    self._keep(game, self.search.legal, result)
                 self.search = None
                 self.position = game.step(self.position, result.action)
             elif self.position.over:
@@ -433,16 +466,16 @@ class _Running[P: Position[State, object]]:
                     self.search = _Search(player, game, shown, self.rng, legal)
                     self.searched += 1
 
-    def _keep(
-        self, game: Learnable[Any], legal: NDArray[np.bool_], policy: NDArray[np.float64]
-    ) -> None:
+    def _keep(self, game: Learnable[Any], legal: NDArray[np.bool_], result: SearchResult) -> None:
         """Keep the decision at the current position, in the deciding player's frame."""
         mover = game.player(self.position)
+        policy = result.policy
         own = game.frame(mover).into(legal)
         shown = game.view(self.position, mover)
         self.obs.append(np.rint(game.observe(shown, mover) * 255).astype(np.uint8))
         self.legal.append(np.packbits(own.ravel()))
         self.policy.append(game.frame(mover).into(policy)[own].astype(np.float32))
+        self.roots.append((2 * result.value - 1) * (1 if mover == 0 else -1))
         self.movers.append(mover)
         self.plies.append(self.position.ply)
 
@@ -463,6 +496,7 @@ class _Running[P: Position[State, object]]:
             np.concatenate(self.policy),
             start,
             outcome,
+            np.array(self.roots, dtype=np.float32),
             np.full(mover.size, self.seed, dtype=np.int64),
             np.array(self.plies, dtype=np.int64),
         )

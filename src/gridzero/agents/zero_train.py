@@ -4,7 +4,8 @@
 generation at a time: the AlphaZero player
 on the network plays games against itself (`generate`), with Gumbel noise; a share of its
 searched decisions goes into a replay buffer of the latest; and the network trains on batches
-drawn from the buffer, toward the search's improved policy and the games' outcomes.
+drawn from the buffer, toward the search's improved policy and a value target: each game's
+outcome blended with the search's own value of the position (`Zero.root_value`).
 
 `generate` splits games between actor processes, which play them on the CPU with
 `agents.zero.self_play`, and judges their leaves in an inference server, a thread of this process
@@ -223,6 +224,11 @@ class Zero:
         training starts from a trained network.
     value_weight : float, default 1.0
         Weight of the value's squared error beside the policy's cross-entropy, at least 0.
+    root_value : float, default 0.5
+        The share of the value's target taken from the search's value of the decision's
+        position, the rest from the game's outcome (`agents.zero.Experience.target`), in
+        [0, 1]. On outcomes alone (0), AlphaZero on Tactics under fog stalled at greedy's level;
+        half and half took it past the MCTS teacher (2026-11-16).
 
     Raises
     ------
@@ -241,6 +247,7 @@ class Zero:
     lr: float = 2e-4
     weight_decay: float = 1e-4
     value_weight: float = 1.0
+    root_value: float = 0.5
 
     def __post_init__(self) -> None:
         for name in ("games", "actors", "simulations", "considered", "buffer", "batch_size"):
@@ -251,6 +258,7 @@ class Zero:
             raise ValueError("lr must be above 0")
         check_real(self.weight_decay, "weight_decay", 0.0)
         check_real(self.value_weight, "value_weight", 0.0)
+        check_real(self.root_value, "root_value", 0.0, 1.0)
 
 
 @dataclass(frozen=True, eq=False)
@@ -271,7 +279,7 @@ class Generation[P]:
         Decisions in the replay buffer after this generation's were added.
     fresh_policy_loss, fresh_value_loss : float
         The losses on the decisions kept, before training on them: how well the network
-        already predicted the search's policy and the outcome. NaN if none were kept.
+        already predicted the search's policy and the value's target. NaN if none were kept.
     policy_loss, value_loss : float
         Mean losses over the generation's training steps (NaN without steps): the
         cross-entropy of the improved policy and the squared error of the value.
@@ -321,8 +329,8 @@ def train[P: Position[State, object]](
     decisions kept to the replay buffer, dropping the oldest past `Zero.buffer`; and trains
     the network on `Zero.steps` batches drawn at random from the buffer, with AdamW kept
     across generations. The loss is the cross-entropy of the search's improved policy over
-    legal actions plus `Zero.value_weight` times the squared error of the value against the
-    outcome. On a GPU, self-play and training run in bfloat16.
+    legal actions plus `Zero.value_weight` times the squared error of the value against its
+    target (`Zero.root_value`). On a GPU, self-play and training run in bfloat16.
 
     Parameters
     ----------
@@ -400,7 +408,9 @@ def _train[P: Position[State, object]](
         )
         playing = time.perf_counter() - start
         buffer = _add(buffer, fresh, settings.buffer)
-        fresh_losses = _mean_losses(net, fresh, settings.batch_size, device)
+        fresh_losses = _mean_losses(
+            net, fresh, settings.batch_size, device, root_value=settings.root_value
+        )
         start = time.perf_counter()
         trained = _learn(net, optimizer, buffer, settings, device, rng)
         training = time.perf_counter() - start
@@ -453,7 +463,7 @@ def _learn(
     sums = np.zeros(2)
     for _ in range(settings.steps):
         index = np.sort(rng.integers(len(buffer), size=min(settings.batch_size, len(buffer))))
-        policy, value = losses(net, buffer.take(index), device)
+        policy, value = losses(net, buffer.take(index), device, root_value=settings.root_value)
         loss = policy.mean() + settings.value_weight * value.mean()
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -465,7 +475,12 @@ def _learn(
 
 
 def _mean_losses(
-    net: PolicyNet, experience: Experience, batch_size: int, device: torch.device
+    net: PolicyNet,
+    experience: Experience,
+    batch_size: int,
+    device: torch.device,
+    *,
+    root_value: float = 0.0,
 ) -> tuple[float, float]:
     """Return the mean losses of the network on decisions, without training; NaN for none."""
     if len(experience) == 0:
@@ -475,13 +490,16 @@ def _mean_losses(
     with torch.no_grad():
         for start in range(0, len(experience), batch_size):
             index = np.arange(start, min(start + batch_size, len(experience)))
-            policy, value = losses(net, experience.take(index), device)
+            batch = experience.take(index)
+            policy, value = losses(net, batch, device, root_value=root_value)
             sums += [policy.sum().item(), value.sum().item()]
     policy_loss, value_loss = sums / len(experience)
     return float(policy_loss), float(value_loss)
 
 
-def losses(net: PolicyNet, batch: Experience, device: torch.device) -> tuple[Tensor, Tensor]:
+def losses(
+    net: PolicyNet, batch: Experience, device: torch.device, *, root_value: float = 0.0
+) -> tuple[Tensor, Tensor]:
     """Return the AlphaZero losses of each decision of a batch.
 
     Parameters
@@ -492,6 +510,10 @@ def losses(net: PolicyNet, batch: Experience, device: torch.device) -> tuple[Ten
         Decisions, from `zero.self_play` with the network's rules.
     device : torch.device
         Where the network is.
+    root_value : float, default 0.0
+        The share of the value's target taken from the search's value of the position
+        (`agents.zero.Experience.target`), in [0, 1]: 0 trains on outcomes alone. Training
+        passes `Zero.root_value`.
 
     Returns
     -------
@@ -499,20 +521,21 @@ def losses(net: PolicyNet, batch: Experience, device: torch.device) -> tuple[Ten
         The cross-entropy of each decision's improved policy against the network's policy
         over its legal actions: ``-sum(target * log_softmax(scores over legal actions))``.
     value : Tensor of float32, shape (n,)
-        The squared error of the network's value against the outcome.
+        The squared error of the network's value against its target.
     """
-    return _losses_of(*outputs(net, batch.obs, batch.legal, device), batch)
+    scores, value, legal = outputs(net, batch.obs, batch.legal, device)
+    return _losses_of(scores, value, legal, batch, root_value=root_value)
 
 
 def _losses_of(
-    scores: Tensor, value: Tensor, legal: Tensor, batch: Experience
+    scores: Tensor, value: Tensor, legal: Tensor, batch: Experience, *, root_value: float = 0.0
 ) -> tuple[Tensor, Tensor]:
     """Return `losses` from the network's `outputs` on ``batch``, for callers that need both."""
     log_policy = torch.where(legal, torch.log_softmax(scores, dim=1), 0.0)
     target = torch.zeros(legal.shape, device=scores.device)
     target[legal] = torch.from_numpy(batch.policy).to(scores.device)  # row by row, as in the CSR
-    outcome = torch.from_numpy(batch.outcome).to(scores.device)
-    return -(target * log_policy).sum(dim=1), (value - outcome) ** 2
+    wanted = torch.from_numpy(batch.target(root_value)).to(scores.device)
+    return -(target * log_policy).sum(dim=1), (value - wanted) ** 2
 
 
 def _entropy(experience: Experience) -> float:

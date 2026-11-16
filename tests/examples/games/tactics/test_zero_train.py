@@ -171,7 +171,13 @@ def test_each_generation_plays_new_boards_with_noise_and_scores_its_own_decision
     for generation, seed in ((first, 20), (second, 21)):
         experience, [played] = self_play(TINY, zero, [seed], keep=0.5)
         assert (generation.kept, generation.searched) == (len(experience), played.searched)
-        expected = _mean_losses(net, experience, settings.batch_size, torch.device("cpu"))
+        expected = _mean_losses(
+            net,
+            experience,
+            settings.batch_size,
+            torch.device("cpu"),
+            root_value=settings.root_value,
+        )
         fresh = (generation.fresh_policy_loss, generation.fresh_value_loss)
         assert fresh == pytest.approx(expected, rel=1e-5)
 

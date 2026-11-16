@@ -451,6 +451,7 @@ def _play(
         policy=policy,
         start=start,
         outcome=outcome,
+        root=np.full(n, np.nan, dtype=np.float32),
         game=np.full(n, seed, dtype=np.int64),
         ply=np.array(actor.plies, dtype=np.int64),
     )

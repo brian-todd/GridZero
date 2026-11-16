@@ -5,7 +5,7 @@ import pytest
 
 from agents_demo import GAMBLE, PLACE, Patches, PatchesPosition, PatchesState
 from gridzero.agents import AlphaZeroPlayer, UniformPlayer, self_play
-from gridzero.agents.zero import sigma
+from gridzero.agents.zero import Experience, sigma
 from gridzero.game import series, tally
 
 GAME = Patches()
@@ -237,6 +237,68 @@ def test_self_play_keeps_decisions_in_the_deciding_players_frame():
         assert policy.sum() == pytest.approx(1.0, abs=1e-6)
     turned = [p for p in experience.ply if p % 2 == 1]
     assert turned, "player 1 decided too"
+
+
+@dataclasses.dataclass
+class Leaning:
+    """An evaluator with a uniform prior that gives player 0 a value of 0.8 everywhere."""
+
+    def __call__(self, game, positions, legal):
+        return [np.zeros(int(m.sum())) for m in legal], np.full(len(positions), 0.8)
+
+
+def test_self_play_keeps_the_search_s_value_of_each_position_for_its_mover():
+    # 8 simulations from the first two plies reach no end of the 12-cell board, so the search's
+    # value is the evaluator's: 0.8 for player 0, which is 0.6 on [-1, 1], and -0.6 for player 1.
+    player = AlphaZeroPlayer(Leaning(), simulations=8, noise=True)
+    experience, _ = self_play(GAME, player, range(4), keep=1.0)
+    first = experience.ply == 0
+    second = experience.ply == 1
+    assert first.any()
+    assert second.any()
+    np.testing.assert_allclose(experience.root[first], 0.6, rtol=1e-6)
+    np.testing.assert_allclose(experience.root[second], -0.6, rtol=1e-6)
+    assert (np.abs(experience.root) <= 1).all()
+
+
+def experience_of(outcome, root):
+    """Decisions with only outcomes and roots that mean anything."""
+    n = len(outcome)
+    return Experience(
+        obs=np.zeros((n, 1, 1), dtype=np.uint8),
+        legal=np.zeros((n, 1), dtype=np.uint8),
+        policy=np.zeros(0, dtype=np.float32),
+        start=np.zeros(n + 1, dtype=np.int64),
+        outcome=np.array(outcome, dtype=np.float32),
+        root=np.array(root, dtype=np.float32),
+        game=np.zeros(n, dtype=np.int64),
+        ply=np.zeros(n, dtype=np.int64),
+    )
+
+
+@pytest.mark.parametrize(
+    ("share", "wanted"),
+    [
+        (0.0, [1.0, -1.0, 0.0, 1.0]),
+        (1.0, [0.5, 0.5, -0.25, 1.0]),
+        (0.5, [0.75, -0.25, -0.125, 1.0]),
+    ],
+)
+def test_a_value_target_blends_the_outcome_with_the_search_s_value(share, wanted):
+    # The last decision was judged by no search (NaN): its outcome stands alone.
+    experience = experience_of([1.0, -1.0, 0.0, 1.0], [0.5, 0.5, -0.25, np.nan])
+    target = experience.target(share)
+    assert target.dtype == np.float32
+    np.testing.assert_allclose(target, wanted)
+
+
+def test_the_search_s_values_follow_their_decisions_when_taken_and_joined():
+    experience = experience_of([1.0, -1.0, 0.0], [0.1, 0.2, 0.3])
+    np.testing.assert_array_equal(
+        experience.take(np.array([2, 0])).root, np.array([0.3, 0.1], dtype=np.float32)
+    )
+    joined = Experience.join([experience, experience.take(np.array([1]))])
+    np.testing.assert_array_equal(joined.root, np.array([0.1, 0.2, 0.3, 0.2], dtype=np.float32))
 
 
 def test_self_play_reports_each_game_with_its_last_position():
