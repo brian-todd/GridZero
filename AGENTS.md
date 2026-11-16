@@ -37,17 +37,18 @@ src/gridzero/game/    games beside simulations: the Game and Player protocols, P
 src/gridzero/agents/  players of any game: a uniform one, Observable, Revealable, Learnable and
                       Frame, the AlphaZero search (zero.py), its network (net.py) and training
                       (zero_train.py), the same search as arrays, for batches of decisions on
-                      the GPU (zero_arrays.py), MuZero's world model (muzero.py, muzero_net.py,
-                      muzero_train.py), imitation (imitate.py), PPO (ppo.py), exact values of
-                      small games (exact.py); Torch only in the networks and the training
-                      modules, and JAX only in zero_arrays.py, none of which the package
-                      imports
+                      the GPU (zero_arrays.py), and its training with self-play wholly on the
+                      GPU (zero_arrays_train.py), MuZero's world model (muzero.py,
+                      muzero_net.py, muzero_train.py), imitation (imitate.py), PPO (ppo.py),
+                      exact values of small games (exact.py); Torch only in the networks and
+                      the training modules, and JAX only in zero_arrays.py and
+                      zero_arrays_train.py, none of which the package imports
 src/gridzero/batched/ core for many states at once, in JAX: operators (operators.py), moves
                       on any space and sight and paths around a cell of a lattice
                       (queries.py), dice (dice.py), a state's fields as arrays (states.py),
                       intents and their resolver (intents.py), the loop (loop.py), the
                       ArrayRules and ArrayGame protocols (games.py); only
-                      agents/zero_arrays.py imports it
+                      agents/zero_arrays.py and agents/zero_arrays_train.py import it
 src/gridzero/worlds/  Planet (planet.py), optional terrain (terrain.py), noise and relief
                       (noise.py)
 src/gridzero/         render.py (globes, maps, flat maps, cell polygons, text)
@@ -92,8 +93,8 @@ taskset -c 4 uv run python -m benchmarks.bench   # timings, pinned to one perfor
 - We build on what is already locked: NumPy, SciPy, Numba, Matplotlib, pandas and
   scikit-learn. Torch and CUDA are available, and JAX (`jax[cuda13]`, added on 2026-11-13 for
   rules and searches that run in batches on the GPU): only `gridzero.batched`, the search on
-  it (`agents/zero_arrays.py`) and a model's array rules (an example's `arrays.py`) import
-  it. GPU work in `core` is deferred;
+  it and its training (`agents/zero_arrays.py`, `agents/zero_arrays_train.py`) and a model's
+  array rules (an example's `arrays.py`) import it. GPU work in `core` is deferred;
   the networks of `agents` train on the GPU (RTX 3080, 10 GB: mind the memory) and play on the
   CPU. JAX takes most of the GPU's memory when it starts: set
   `XLA_PYTHON_CLIENT_PREALLOCATE=false` where Torch shares the GPU. The tests run JAX on the
@@ -327,6 +328,11 @@ def pull(x: NDArray[np.float32], op: NeighborOperator) -> NDArray[np.float32]:
     step all on the device, finished games refilled from starts made once: 1,460 decisions a
     second for 1,024 games at 64 simulations, 390 for 2,048 at 256, about 21,000 and 5,600
     games an hour.
+  - **AlphaZero's training in arrays** (`agents.zero_arrays_train`, 2026-11-16, 9x9 under
+    fog, 1,024 games at 64 simulations): about 2,700 decisions a second with training every
+    16 steps, so training costs self-play little; a start made as each game ends, 1 ms a
+    start on 9x9 and 5 ms on 25x25, costs it nothing worth a pool. The search compiles in the
+    first generation, about 20 seconds.
 - **A simulation in arrays** (`batched.Simulation`, the same machine, 2026-11-14; the planet's
   evolution, 32 traits on 2,562 cells, 200 steps a run): 85,000 to 99,000 steps a second for 4
   to 16 planets at once, 64,000 for 64 and 30,000 for 1,024, where `core` does 590 on one core
@@ -596,8 +602,9 @@ The rules below are the ones to keep in mind while writing code.
     which holds it to the game ply by ply, and whole games of every rule variant. What runs in
     batches asks only for its JAX half, `ArrayRules`.
   - **A game that hides is played whole in arrays too** (Tactics under fog): the real
-    position steps as the game steps it, and `view(state, player)` gives a side's belief, as
-    `Game.view` does, with a seed of its own. A search plays beliefs, which hide nothing:
+    position steps as the game steps it, and `view(state, player)` (`ArrayRules.view`, the
+    state itself in a game that hides nothing) gives a side's belief, as `Game.view` does,
+    with a seed of its own. A search plays beliefs, which hide nothing:
     the rules for it are built without the hidden bookkeeping (`TacticsArrays(game,
     hidden=False)`), since under `vmap` every branch costs, taken or not.
   - **Dice a search should weigh are outcomes, not draws.** `outcomes(state, action, dice)`
@@ -610,6 +617,14 @@ The rules below are the ones to keep in mind while writing code.
   - **The network stays in Torch.** A search in arrays hands each batch of observations to an
     evaluator through DLPack, where it lies on the GPU (`net.NetArrayEvaluator`), and reads
     the scores back the same way: one network definition, one set of weights.
+  - **AlphaZero trains one way, on either engine.** `agents.zero_train` plays self-play in
+    processes on the CPU, for a game with only its `Game`; `agents.zero_arrays_train` plays it
+    wholly on the GPU, for a game with array rules. Both keep decisions as
+    `agents.zero.Experience` and train them by `zero_train.losses`: the improved policy, and
+    a value target of the game's outcome blended with the search's own value of the position
+    (`root_value`, 0.5 by default: `Experience.target`). On outcomes alone, the value of
+    Tactics under fog never learned to steer the search, and AlphaZero stalled at greedy's
+    level; with half the target from the search it passed the MCTS teacher (2026-11-16).
   - **A simulation's array rules are its phases once more,** in a class beside the model
     (`arrays.py`: `EvolutionArrays(model).phases()`, built from the model's own value). A rule
     is declared with `batched.phase` as `core.phase` declares one, reads `batched.Fields`

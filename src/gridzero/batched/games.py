@@ -24,6 +24,9 @@ class ArrayRules[S, D](Protocol):
     A search reads a step's chances from `outcomes`: the states a step may lead to, each with
     its exact probability, so that it can weigh a hit and a miss without rolling.
 
+    A game that hides something plays its real state, and shows each player a state of its own
+    (`view`), as `game.Game.view` does.
+
     Attributes
     ----------
     n_actions : int
@@ -192,6 +195,27 @@ class ArrayRules[S, D](Protocol):
             The probability of each, summing to 1, and 0 for an outcome that cannot happen
             (whose state means nothing). A step without such draws has one outcome, the
             first, of probability 1.
+        """
+        ...
+
+    def view(self, state: S, player: ArrayLike) -> S:
+        """Return what a player is shown of a state, as the game's ``view`` shows it.
+
+        A game that hides something (Tactics under fog) shows a position of what the player
+        believes, which plays on as a game hiding nothing: what a search plays. A game that
+        hides nothing shows the state itself.
+
+        Parameters
+        ----------
+        state : S
+            One state.
+        player : Array of int, shape ()
+            The player.
+
+        Returns
+        -------
+        S
+            The state shown, in the same shapes.
         """
         ...
 

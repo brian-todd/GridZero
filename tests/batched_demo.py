@@ -300,6 +300,9 @@ class Wager:
         gamble = jnp.asarray(action) == self.GAMBLE
         return ways, jnp.where(gamble, jnp.stack([1 - wins, wins]), jnp.array([1.0, 0.0]))
 
+    def view(self, state: WagerState, player) -> WagerState:
+        return state
+
     def observe(self, state: WagerState, player) -> jax.Array:
         return jnp.full((1, 1), state.ply / (self.waits + 1), jnp.float32)
 

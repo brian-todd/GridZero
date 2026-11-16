@@ -42,6 +42,24 @@ def small_rules() -> Tactics:
     return Tactics(shape=(15, 15), home_depth=3, hold_rounds=3, capture_by=8, max_rounds=16)
 
 
+def nine_rules() -> Tactics:
+    """Return the rules of the 9x9 board AlphaZero first learned on in arrays.
+
+    Five units a side, homes 4 rows deep, a deadline at round 8 and a cap at round 12: games
+    of about 100 plies, nearly all ended by killing. Under fog the sides never lose sight of
+    each other here (greedy games, 2026-11-16: no belief differed from its position at any ply),
+    so fog hides nothing; on 15x15 (`small_rules`) beliefs differ for more than half of each
+    game. AlphaZero from scratch, its value trained half on outcomes and half on the search's
+    own value, passed the MCTS teacher here in about six hours of one GPU (2026-11-16).
+
+    Returns
+    -------
+    Tactics
+        The rules.
+    """
+    return Tactics(shape=(9, 9), home_depth=4, team_size=5, capture_by=8, max_rounds=12)
+
+
 def earlier_rules() -> Tactics:
     """Return the rules before knights charged and footsoldiers braced, to compare against.
 

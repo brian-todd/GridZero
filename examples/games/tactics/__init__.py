@@ -46,9 +46,9 @@ Players and matches
 -------------------
 RandomPlayer, GreedyPlayer, Fielded, SitterPlayer
     Who picks an action from the legal ones.
-summarize, Summary, balance, Balance, EVAL_SEED, small_rules, earlier_rules
+summarize, Summary, balance, Balance, EVAL_SEED, small_rules, nine_rules, earlier_rules
     What games show, how fair and lively they were, the boards players are scored on, and rules
-    for quick games on a 15x15 board.
+    for quick games on a 15x15 board and a 9x9 one.
     `game.play` and `game.series` play them: `Tactics` is a `game.Game`.
 Tactics.observe, Tactics.planes, Tactics.frame
     What a team sees: planes per cell in its own frame, for networks (`agents.frame.Learnable`).
@@ -101,7 +101,16 @@ from .events import (
 )
 from .game import Odds, Tactics
 from .lessons import Lessons, lessons_of, positions_of, teach
-from .match import EVAL_SEED, Balance, Summary, balance, earlier_rules, small_rules, summarize
+from .match import (
+    EVAL_SEED,
+    Balance,
+    Summary,
+    balance,
+    earlier_rules,
+    nine_rules,
+    small_rules,
+    summarize,
+)
 from .players import Fielded, GreedyPlayer, RandomPlayer, SitterPlayer
 from .rules import (
     DEFAULT_CAPS,
@@ -173,6 +182,7 @@ __all__ = [
     "make_board",
     "material",
     "move_features",
+    "nine_rules",
     "positions_of",
     "roll_needed",
     "small_rules",

@@ -46,6 +46,9 @@ Each README dates its findings; these are the main ones.
   A code player fit to the search player beats greedy 135-57 and matches the search player at a third of
   its time per decision, also on a board it wasn't fit on, once one weight is corrected by hand: the
   search's own value is blind to knights.
+  AlphaZero from scratch passed the search player on a 9x9 board (2026-11-16, 74% against it after
+  about six hours of one GPU), once its value was trained half on outcomes and half on the search's
+  own value: on outcomes alone it stalled at greedy's level.
   Under fog its static value falls behind (102-90 against greedy); read 4 unit turns of greedy
   play ahead it beats greedy 131-61 and is level with the search player, in about two thirds of a
   second a unit's turn.

@@ -4,7 +4,7 @@ Not run here: ``tactics.watch`` (a GIF of hundreds of frames, a minute),
 ``tactics.code_games`` (a minute a game, whose parts `test_lessons` runs small),
 ``in_a_row.code_report`` (a deep search over hundreds of positions, whose parts `test_report`
 runs small), ``in_a_row.play`` (a server, until stopped, whose parts `test_play` starts and plays),
-and the training experiments ``tactics.zero_scratch``, ``tactics.ppo``,
+and the training experiments ``tactics.zero_scratch``, ``tactics.zero_arrays``, ``tactics.ppo``,
 ``in_a_row.zero_scratch`` and ``colonies.muzero_scratch`` (the GPU, and half a minute to minutes
 each).
 `test_run` imports each of them and checks its arguments.

@@ -128,6 +128,7 @@ search in arrays (`gridzero.agents.zero_arrays`) weighs a hit against a miss ins
 | `tactics.fog [weights] [starts] [size] [simulations]` | What fog changes: greedy against itself in the open and under fog, a second knight's worth with and without its longer sight, and a code player's record both ways |
 | `tactics.watch [start] [prefix] [players...]` | One game, decision by decision, in a window or a GIF (random, greedy, sitter, search) |
 | `tactics.zero_scratch <minutes> [prefix] ...` | AlphaZero on a 15x15 board, from scratch or after imitating greedy, in a time box, with endings, picks and work by generation |
+| `tactics.zero_arrays <minutes> [prefix] [board] [root_value] [continues]` | AlphaZero with self-play wholly on the GPU, 1,024 games at once, under fog, from scratch or continuing a run, on 15x15 or 9x9, its value trained half on outcomes and half on the search's own value; weights and figures each generation |
 | `tactics.ppo <minutes> [prefix] [starts] [games] [taught] [entropy]` | A network warmed up by PPO self-play on 15x15 after imitating greedy, a quarter of its games against greedy, in a time box, scored alone against greedy as it goes |
 | `tactics.zero_check <weights> [starts] [simulations] [rivals...]` | The AlphaZero player on saved weights against the network alone, greedy or search |
 
@@ -193,6 +194,20 @@ Everything dated before 2026-11-10 was measured without fog (`fog=False`), which
   second and 2,048 at 256 take 390, about 21,000 and 5,600 games an hour at 250 plies a game,
   where `agents.zero` in 24 processes played 840 at 64. Searching with the whole rules instead
   costs 17% (106,000 simulations a second against 88,000 at 256).
+- **AlphaZero learns once its value learns** (2026-11-16, the same machine, `nine_rules`: 9x9,
+  five a side; the loop now in `tactics.zero_arrays`, then run from a script of its own; each
+  figure 96 games on `EVAL_SEED`, both seats). From random weights, its value trained on outcomes alone, the
+  network with 64 simulations of search rose to greedy's level in about 100 minutes (51% against
+  greedy, 27% against the search player at 50 simulations) and stayed there for 80 more: its
+  search added 2 points to the network alone, and 256 or 1,024 simulations nothing. With the
+  network's prior and the search player's rollouts as the value, the same search played 76%
+  against greedy and 47% against the search player: the value was what held it. A heavier value
+  loss on outcomes made it worse (15% against the search player after an hour). A target half
+  the outcome and half the search's own value of the position took it, from the 180-minute
+  weights, to 53% against the search player in an hour and 74% in three (73% against it at 100
+  simulations, 59% at 200; 86% against greedy, 79% for the network alone), still climbing:
+  about six hours of one GPU in all. On 9x9 the sides never lose sight of each other, so fog hid
+  nothing there; on 15x15 it hides units for more than half of each game.
 - **Routes cost whole numbers since that day** (`game.py`): a step 1024 and a watched tile 1 more,
   where it was 1 and 0.001. Sums of such fractions depend on their order from 6 steps on, so among
   routes with as many watched tiles the tie could go to rounding instead of the lowest cell. No
@@ -484,6 +499,6 @@ experiment can make any more. `zero_check` still plays saved full-size weights.
 | `code_player.py` | `CodeEvaluator`, `HAND_PICKED`, `value_features`, `move_features`, `look_ahead` |
 | `lessons.py` | `Lessons`, `lessons_of`, `positions_of`, `teach`: a search player's games kept to fit to |
 | `fit.py` | `fit`, `cases_of`, `FitScore`, `playing`: a code player's constants fit to those games and scored, and those that play |
-| `match.py` | `EVAL_SEED`, `small_rules`, `summarize`, `balance` |
+| `match.py` | `EVAL_SEED`, `small_rules`, `nine_rules`, `summarize`, `balance` |
 | `arrays.py` | `TacticsArrays`, `State`, `Dice`: the rules as JAX arrays, for batches of games on the GPU, under fog too, with a side's belief (`view`) and a step's outcomes and their chances for a search |
 | `text.py`, `pictures.py` | Events and summaries as text; boards drawn as hexes |
