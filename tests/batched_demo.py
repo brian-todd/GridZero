@@ -83,7 +83,8 @@ def check_array_game(
     compiled : Compiled
         Its array rules.
     position : Position
-        Where to start: a position that hides nothing, or one a search would play on.
+        Where to start: any position of the game, a belief or one that hides units from a
+        side, if the array rules play those.
     choose : callable, default `random_choice`
         Picks each local action.
     rng : numpy.random.Generator

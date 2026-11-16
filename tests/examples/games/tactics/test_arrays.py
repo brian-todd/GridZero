@@ -44,13 +44,24 @@ RULES = {
 """Rules that between them turn every switch: fog, the earlier kinds (a double move, no charge
 or brace, turns shuffled each round) and each flag."""
 
+UNDER_FOG = {
+    "nine, fog": lambda: dataclasses.replace(WORKS, fog=True),
+    "near": lambda: dataclasses.replace(
+        WORKS,
+        units=tuple(dataclasses.replace(u, reach=1, sight=1.0) for u in WORKS.units),
+        fog=True,
+    ),
+}
+"""Rules under fog for positions built by hand: the default kinds on `WORKS`' board, and kinds
+that see and strike only the tiles beside them."""
+
 CENTER = (4, 4)  # the point of `WORKS`' board
 
 
 @functools.cache
-def compiled(name: str) -> Compiled[TacticsArrays]:
-    """The array rules of one of `RULES`, compiled once a session."""
-    return Compiled(TacticsArrays(RULES[name]()))
+def compiled(name: str, hidden: bool = True) -> Compiled[TacticsArrays]:
+    """The array rules of one of `RULES` or `UNDER_FOG`, compiled once a session."""
+    return Compiled(TacticsArrays((RULES | UNDER_FOG)[name](), hidden=hidden))
 
 
 def played(
@@ -68,7 +79,8 @@ def played(
             return arrays.local(position, todo.pop(0))
         if not position.deploying and rng.random() < greedy:
             mover = game.player(position)
-            return arrays.local(position, player(game, mover, position, game.legal(position), rng))
+            shown = game.view(position, mover)
+            return arrays.local(position, player(game, mover, shown, game.legal(position), rng))
         verbs = {local: arrays.action(position, local)[0] for local in legal}
         rare = [a for a, v in verbs.items() if v in (Verb.DEFER, Verb.SWAP, Verb.BUILD, Verb.BREAK)]
         attacks = [a for a, v in verbs.items() if v == Verb.ATTACK]
@@ -160,6 +172,45 @@ def test_many_games_of_every_rule_are_the_games_ply_by_ply(name):
     assert found["plies"] > 3000
     assert {"killed", "held", "deadline"} <= set(seen)
     assert seen["deferred"] > 0
+
+
+def real_games(name, seeds) -> tuple[Counter[str], Counter[object]]:
+    """Check whole games under fog of one of `RULES`, as the game plays them: from the first
+    unit placed, on the positions themselves, not on beliefs. Counts the plies that hid units
+    in ``"hidden"``, and the ghosts (units out of the other side's sight) in ``"ghosts"``."""
+    game, run = (RULES | UNDER_FOG)[name](), compiled(name)
+    found: Counter[str] = Counter()
+    seen: Counter[object] = Counter()
+    count = events_of(seen)
+
+    def watch(position) -> None:
+        count(position)
+        if position.round > 0 and not position.over:
+            seen["hidden"] += 1
+            units, cells = position.state.units, position.state.occupied.nonzero()[0]
+            seen["ghosts"] += int((units.spotted[cells] != cells).sum())
+
+    for seed in seeds:
+        share = (0.0, 0.5, 0.8, 0.95)[seed % 4]
+        found += played(run, game.start(seed), seed=seed, watch=watch, greedy=share)
+    return found, seen
+
+
+def test_whole_games_under_fog_are_the_games_ply_by_ply():
+    found, seen = real_games("small, fog", range(2))
+    assert set(found) == {"plies"}, found
+    assert seen["hidden"] > 400
+    assert seen["ghosts"] > 100
+    assert seen[Died] > 0
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("name", ["small, fog", "nine, fog"])
+def test_many_games_under_fog_are_the_games_ply_by_ply(name):
+    found, seen = real_games(name, range(2, 32))
+    assert set(found) == {"plies"}, found
+    assert seen["hidden"] > 3000
+    assert {"killed", "held", "deadline"} & set(seen)
 
 
 # Hand-made positions for what whole games seldom show.
@@ -326,6 +377,113 @@ def test_a_round_ends_on_the_point_and_the_game_at_its_deadline(works, at):
         found = played(compiled("nine"), position, ends, plies=6, watch=events_of(seen))
         assert set(found) == {"plies"}, found
     assert seen[GameOver] >= 2
+
+
+# Under fog: what a side believes, and the game played on what it doesn't know.
+
+
+def test_a_move_stops_before_a_unit_it_didnt_know_of(make_battle, at):
+    # The enemy stands two tiles off, where the mover is going, believed in the far corner.
+    game = UNDER_FOG["near"]()
+    pieces = [piece(2, 4, FOOT, 0), piece(4, 4, FOOT, 1, spotted=at(8, 8))]
+    position = make_battle(pieces, game, point=CENTER)
+    move = (Verb.MOVE, at(4, 4))
+    assert game.step(position, move).state.units.uid[at(3, 4)] == 0  # one tile short
+    for seed in range(4):
+        found = played(compiled("near"), dataclasses.replace(position, seed=seed), [move], plies=6)
+        assert set(found) == {"plies"}, (seed, found)
+
+
+@pytest.mark.parametrize(
+    ("pieces", "moves"),
+    [
+        # Last seen on (6, 4), out of sight, the enemy walks off; then the footsoldier sees
+        # that tile empty, and the ghost moves on to the nearest tile out of sight.
+        (
+            [piece(6, 4, FOOT, 1), piece(2, 4, FOOT, 0)],
+            [((8, 4), Verb.MOVE), ((8, 4), Verb.END), ((4, 4), Verb.MOVE)],
+        ),
+        # Glimpsed on its way at (7, 4), the walker is last seen there, hurt since it was
+        # seen before, and sees from there the watcher its side believed on (0, 0).
+        (
+            [
+                piece(8, 3, FOOT, 1, hp=2, spotted_hp=WORKS.units[FOOT].hp),
+                piece(4, 4, FOOT, 0, spotted=0),
+            ],
+            [((7, 5), Verb.MOVE)],
+        ),
+        # Two ghosts move on together, never to one tile.
+        (
+            [piece(6, 4, FOOT, 1), piece(6, 5, FOOT, 1), piece(0, 4, KNIGHT, 0)],
+            [
+                ((8, 4), Verb.MOVE),
+                ((8, 4), Verb.END),
+                ((8, 5), Verb.MOVE),
+                ((8, 5), Verb.END),
+                ((2, 4), Verb.MOVE),
+            ],
+        ),
+    ],
+    ids=["moved on", "glimpsed", "two ghosts"],
+)
+def test_what_each_side_remembers_is_the_games(make_battle, at, pieces, moves):
+    position = make_battle(pieces, UNDER_FOG["nine, fog"](), point=CENTER)
+    forced = [(verb, at(*tile)) for tile, verb in moves]
+    for seed in range(4):
+        start = dataclasses.replace(position, seed=seed)
+        found = played(compiled("nine, fog"), start, forced, plies=len(forced) + 4)
+        assert set(found) == {"plies"}, (seed, found)
+
+
+def test_a_view_is_the_games_but_for_the_seed_of_a_belief():
+    game = small_rules()
+    run = compiled("small, fog")
+    arrays = run.arrays
+    view = jax.jit(arrays.view)
+    greedy = GreedyPlayer()
+    rng = np.random.default_rng(1)
+    position, beliefs = game.start(5), 0
+    while not position.over:
+        if position.ply % 5 == 0:
+            state = arrays.to_arrays(position)
+            for team in (0, 1):
+                shown = game.view(position, team)
+                found = view(state, team)
+                assert differences(found, arrays.to_arrays(shown)) == ["seed"], position.ply
+                assert np.asarray(found.seed).tolist() != np.asarray(state.seed).tolist()
+                np.testing.assert_array_equal(view(state, team).seed, found.seed)
+                assert not differences(view(found, 1 - team), found)  # a belief already
+                beliefs += position.round > 0
+        me = game.player(position)
+        action = greedy(game, me, game.view(position, me), game.legal(position), rng)
+        position = game.step(position, action)
+    state = arrays.to_arrays(position)
+    assert not differences(view(state, 0), state)  # once over, all is shown
+    assert beliefs > 20
+
+
+def test_without_fog_a_view_is_the_state_itself():
+    arrays = compiled("nine").arrays
+    state = arrays.to_arrays(WORKS.start(3))
+    assert not differences(arrays.view(state, 1), jax.tree.map(jnp.asarray, state))
+
+
+def test_rules_that_leave_fog_out_play_beliefs_as_the_whole_rules_do():
+    game, run = small_rules(), compiled("small, fog", hidden=False)
+    assert not run.arrays.hidden
+    assert compiled("small, fog").arrays.hidden
+    position = game.start(7)
+    rng = np.random.default_rng(7)
+    greedy = GreedyPlayer()
+    for _ in range(90):  # into the battle, ghosts and all
+        me = game.player(position)
+        position = game.step(
+            position, greedy(game, me, game.view(position, me), game.legal(position), rng)
+        )
+    found = played(run, game.view(position, game.player(position)), seed=7, plies=200, greedy=0.5)
+    assert set(found) == {"plies"}, found
+    with pytest.raises(TypeError, match="hidden"):
+        TacticsArrays(game, hidden=1)  # ty: ignore[invalid-argument-type]  # not a bool, on purpose
 
 
 # Between the engines.

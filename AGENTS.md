@@ -322,6 +322,11 @@ def pull(x: NDArray[np.float32], op: NeighborOperator) -> NDArray[np.float32]:
     of buffers it could not reuse, and the tests make warnings errors.
   - A step's outcomes are its rules run once per pattern of hits (8 for Tactics), every
     simulation: with the forced steps and the observation, still a small part of the fifth.
+    Fog's bookkeeping, never taken on a belief, cost 17% more (88,000 a second at 256).
+  - **Self-play under fog on the GPU** (2026-11-15): real states, beliefs, the search and the
+    step all on the device, finished games refilled from starts made once: 1,460 decisions a
+    second for 1,024 games at 64 simulations, 390 for 2,048 at 256, about 21,000 and 5,600
+    games an hour.
 - **A simulation in arrays** (`batched.Simulation`, the same machine, 2026-11-14; the planet's
   evolution, 32 traits on 2,562 cells, 200 steps a run): 85,000 to 99,000 steps a second for 4
   to 16 planets at once, 64,000 for 64 and 30,000 for 1,024, where `core` does 590 on one core
@@ -590,6 +595,11 @@ The rules below are the ones to keep in mind while writing code.
     the game's dice read back from the positions it made. Its tests run `check_array_game`,
     which holds it to the game ply by ply, and whole games of every rule variant. What runs in
     batches asks only for its JAX half, `ArrayRules`.
+  - **A game that hides is played whole in arrays too** (Tactics under fog): the real
+    position steps as the game steps it, and `view(state, player)` gives a side's belief, as
+    `Game.view` does, with a seed of its own. A search plays beliefs, which hide nothing:
+    the rules for it are built without the hidden bookkeeping (`TacticsArrays(game,
+    hidden=False)`), since under `vmap` every branch costs, taken or not.
   - **Dice a search should weigh are outcomes, not draws.** `outcomes(state, action, dice)`
     lists the states a step may lead to with their exact chances (an attack that hits or
     misses), and reads from `dice` only what has too many outcomes to list (an order of

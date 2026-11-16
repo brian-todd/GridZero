@@ -83,8 +83,11 @@ hold: at 4, greedy players ended only 5% of games there by holding, at 3 a quart
 
 **The rules once more, as arrays** (`arrays.py`, `TacticsArrays`): the same rules as JAX functions of
 one position of fixed shape (`gridzero.batched`), which compile and run for thousands of games at
-once on a GPU, for self-play and searches at a scale the Python game can't reach. They play a
-position that hides nothing: a game without fog, or a side's belief. Units are slots by uid, and an
+once on a GPU, for self-play and searches at a scale the Python game can't reach. They play any
+position, under fog too: legal actions are the mover's belief's, a move stops before a unit it
+didn't know of, and each side remembers where it last saw the other's (`TacticsArrays.view` gives
+a side's belief). A search plays only beliefs, so `TacticsArrays(game, hidden=False)` leaves that
+bookkeeping out, a sixth of a search's time. Units are slots by uid, and an
 action names a target near the acting unit: 133 local actions under the default rules on any board,
 where the game has 18 verbs times every tile. Stats, caps and bonuses are read from the same
 `Tactics` value, so a variant by parameters needs no new code; a new mechanic is written twice.
@@ -181,6 +184,15 @@ Everything dated before 2026-11-10 was measured without fog (`fog=False`), which
     on top of it. `agents.zero` on this game did 2,200 simulations a second in 24 processes
     around one GPU server. 4,096 decisions at 256 simulations take 9.7 seconds: 400,000 searched
     decisions in a quarter of an hour. A search compiles in 17 to 26 seconds.
+- **Fog in arrays** (2026-11-15, the same machine): real games under fog, from the first unit
+  placed, are the game's ply by ply (62 games, 18,526 plies, of them 3 moves stopped by a unit
+  the mover didn't know of and 163 changes to what a side remembers, besides cases built by
+  hand). Self-play under fog then runs on the GPU from start to finish: real states stepped by
+  the whole rules, each mover's belief searched by the rules without fog's bookkeeping, finished
+  games refilled from starts made once. 1,024 games at 64 simulations take 1,460 decisions a
+  second and 2,048 at 256 take 390, about 21,000 and 5,600 games an hour at 250 plies a game,
+  where `agents.zero` in 24 processes played 840 at 64. Searching with the whole rules instead
+  costs 17% (106,000 simulations a second against 88,000 at 256).
 - **Routes cost whole numbers since that day** (`game.py`): a step 1024 and a watched tile 1 more,
   where it was 1 and 0.001. Sums of such fractions depend on their order from 6 steps on, so among
   routes with as many watched tiles the tie could go to rounding instead of the lowest cell. No
@@ -473,5 +485,5 @@ experiment can make any more. `zero_check` still plays saved full-size weights.
 | `lessons.py` | `Lessons`, `lessons_of`, `positions_of`, `teach`: a search player's games kept to fit to |
 | `fit.py` | `fit`, `cases_of`, `FitScore`, `playing`: a code player's constants fit to those games and scored, and those that play |
 | `match.py` | `EVAL_SEED`, `small_rules`, `summarize`, `balance` |
-| `arrays.py` | `TacticsArrays`, `State`, `Dice`: the rules as JAX arrays, for batches of games on the GPU, with a step's outcomes and their chances for a search |
+| `arrays.py` | `TacticsArrays`, `State`, `Dice`: the rules as JAX arrays, for batches of games on the GPU, under fog too, with a side's belief (`view`) and a step's outcomes and their chances for a search |
 | `text.py`, `pictures.py` | Events and summaries as text; boards drawn as hexes |

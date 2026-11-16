@@ -2,9 +2,12 @@
 
 `Tactics` stays the game: players, ladders, pages and tests read it. `TacticsArrays` makes the
 same moves on a `State` of arrays of fixed shape (`gridzero.batched.ArrayGame`), so that
-``jax.jit`` compiles them and ``jax.vmap`` runs a batch. It plays **a position that hides
-nothing**: a game without fog, or under fog a side's belief (`Tactics.view`), which is what a
-search plays on. Given the dice the game rolled, its positions are the game's, field for field.
+``jax.jit`` compiles them and ``jax.vmap`` runs a batch. It plays **any position**, under fog
+too: legal actions are then those of the mover's belief, a move stops before a unit it didn't
+know of, and each side remembers where it last saw the other's units. `TacticsArrays.view`
+gives a side's belief (`Tactics.view`), a position that hides nothing, which is what a search
+plays on; ``TacticsArrays(game, hidden=False)`` plays only such positions, at less cost. Given
+the dice the game rolled, its positions are the game's, field for field.
 
 How it differs in form:
 
@@ -31,7 +34,7 @@ from numpy.typing import NDArray
 
 from gridzero import batched
 from gridzero.batched import FAR, Patch
-from gridzero.core import Field
+from gridzero.core import Field, hops
 from gridzero.game import Action
 
 from . import objective
@@ -133,6 +136,18 @@ class _Rolled(NamedTuple):
     """How many of a d20's faces hit, for each roll used, 1 to 19: int32, shape (n_rolls,)."""
 
 
+class _Walk(NamedTuple):
+    """The walk of the unit that acted in a step: what the other side may glimpse of it."""
+
+    unit: jax.Array
+    """The slot of the unit: int32, shape ()."""
+    tiles: jax.Array
+    """The tiles of its route, from where it started, then the last one repeated: int32,
+    shape (moves + 1,)."""
+    length: jax.Array
+    """How many moves it made, 0 for none: int32, shape ()."""
+
+
 _UNITS: dict[str, tuple[type[np.generic], int]] = {
     "cell": (np.int16, -1),
     "kind": (np.int8, -1),
@@ -184,13 +199,21 @@ class TacticsArrays:
     Parameters
     ----------
     game : Tactics
-        The rules. Positions are played as ones that hide nothing: under ``fog``, give it
-        beliefs (`Tactics.view`).
+        The rules.
+    hidden : bool, default True
+        Whether to play positions that hide units from a side (a battle under ``fog``, not a
+        belief) as the game does: legal actions are those of the mover's belief, a move stops
+        before a unit it didn't know of, and each step brings each side's memory of the other
+        up to date. False leaves that out, for what plays only positions that hide nothing,
+        such as a search, which plays beliefs: it is a sixth of a search's time. Without fog
+        it changes nothing.
 
     Attributes
     ----------
     game : Tactics
         The rules.
+    hidden : bool
+        Whether it plays positions that hide units: under ``fog``, and asked to.
     n_cells, n_units : int
         The board's tiles, and the slots of units: twice the team size.
     n_actions : int
@@ -222,10 +245,13 @@ class TacticsArrays:
         If the board has too many tiles to count in int16.
     """
 
-    def __init__(self, game: Tactics) -> None:
+    def __init__(self, game: Tactics, *, hidden: bool = True) -> None:
         if not isinstance(game, Tactics):
             raise TypeError(f"game must be a Tactics, got {type(game).__name__}")
+        if not isinstance(hidden, bool):
+            raise TypeError(f"hidden must be a bool, got {type(hidden).__name__}")
         self.game = game
+        self.hidden = game.fog and hidden
         space = game.space
         kinds = game.units
         n = self.n_cells = space.n_cells
@@ -306,6 +332,8 @@ class TacticsArrays:
         if game.fog:
             self.far = batched.patch(space, max(s.sight for s in kinds))
             self._sight = j(np.array([self.far.within(s.sight) for s in kinds] + last))
+            ids = np.arange(n)
+            self._hops = j(hops(space, ids[:, None], ids[None, :]).astype(np.int32))
         self._hits = j((np.arange(self.n_outcomes)[:, None] >> np.arange(self.n_rolls)) & 1 > 0)
         # Each local action as a team's frame names it (`Tactics.frame`): its verb there,
         # and for a battle the slot around the acting unit of the tile it names.
@@ -615,12 +643,76 @@ class TacticsArrays:
         Array of bool, shape (n_actions,)
             All False once the game is over.
         """
-        s = _wide(state)
+        s = self._as_mover_believes(_wide(state))
         none = jnp.zeros(self.n_actions, jnp.bool_)
         placing, acting = self._deployable(s), self._battle_legal(s)
         placing = none.at[: placing.shape[0]].set(placing)
         acting = none.at[: acting.shape[0]].set(acting)
         return jnp.where(s.round == 0, placing, acting) & ~s.over
+
+    def view(self, state: State, player: ArrayLike) -> State:
+        """Return what a team is shown of a state, as `Tactics.view` does.
+
+        Parameters
+        ----------
+        state : State
+            One state.
+        player : Array of int, shape ()
+            0 or 1: the team.
+
+        Returns
+        -------
+        State
+            The state itself without ``fog``, once the game is over, and when it is a belief
+            already. Otherwise the team's belief (``belief == player``): its own units as they
+            are, and each of the other side's on the tile it was last seen on, with the hit
+            points and facing it showed then, as a unit that has done nothing this round. A
+            belief's seed is drawn from the state's (`gridzero.batched.stream` 3 of its root),
+            as the game gives its beliefs a seed of their own: another than the game's, as
+            this engine's dice are.
+        """
+        if not self.game.fog:
+            return jax.tree.map(jnp.asarray, state)
+        s = _wide(state)
+        shown = (s.belief < 0) & ~s.over
+        return _narrow(_select(shown, self._believed(s, jnp.asarray(player, jnp.int32)), s))
+
+    def _hidden(self, s: State) -> jax.Array:
+        """Return whether a state hides units from a side: a battle under fog, not a belief."""
+        return jnp.bool_(self.hidden) & (s.belief < 0) & (s.round > 0) & ~s.over
+
+    def _as_mover_believes(self, s: State) -> State:
+        """Return a state as its mover decides on it: its belief where the state hides units."""
+        if not self.hidden:
+            return s
+        return _select(self._hidden(s), self._believed(s, s.team[self._acting(s)]), s)
+
+    def _believed(self, s: State, team: jax.Array) -> State:
+        """Return a team's belief of a state of a game under fog, as `Tactics._believed`."""
+        alive, battle = s.cell >= 0, s.round > 0
+        ghost = alive & (s.team != team) & (s.spotted != s.cell) & battle
+        cell = jnp.where(ghost, s.spotted, s.cell)
+        hp = jnp.where(ghost, s.spotted_hp, s.hp)
+        facing = jnp.where(ghost, s.spotted_facing, s.facing)
+        shown = alive & battle  # in a belief every unit is where it is shown
+        key = batched.stream(batched.root(s.seed), 3)
+        return s._replace(
+            cell=cell,
+            hp=hp,
+            facing=facing,
+            moved=jnp.where(ghost, 0, s.moved),
+            swapped=s.swapped & ~ghost,
+            attacked=s.attacked & ~ghost,
+            faced=s.faced & ~ghost,
+            engaged=s.engaged & ~ghost,
+            watch=jnp.where(ghost, -1, s.watch),
+            spotted=jnp.where(shown, cell, s.spotted),
+            spotted_hp=jnp.where(shown, hp, s.spotted_hp),
+            spotted_facing=jnp.where(shown, facing, s.spotted_facing),
+            spotted_round=jnp.where(shown & (s.team == team), s.round, s.spotted_round),
+            belief=team,
+            seed=key.at[1].set(key[1] & 0x7FFFFFFF),  # below 2**63, as a game's seed
+        )
 
     def _acting(self, s: State) -> jax.Array:
         """Return the slot of the unit whose turn it is: the lowest initiative not done."""
@@ -826,16 +918,95 @@ class TacticsArrays:
         action = jnp.asarray(action, jnp.int32)
         dice = Dice(*(jnp.asarray(draw, jnp.int32) for draw in dice))
         deployed = self._deploy(s, action, dice)
-        battle, rolled = self._battle(s, action, dice)
-        after = jax.tree.map(lambda a, b: jnp.where(s.round == 0, a, b), deployed, battle)
+        battle, rolled, walk = self._battle(s, action, dice)
+        after = _select(s.round == 0, deployed, battle)
+        if self.hidden:
+            after = self._spotted(s, after, walk)
         gone = after.cell < 0  # a slot without a unit holds the defaults
         cleared = {
             name: jnp.where(gone, default, getattr(after, name))
             for name, (_, default) in _UNITS.items()
         }
-        after = after._replace(**cleared, ply=s.ply + 1)
-        after = State(*(value.astype(_DTYPES[name]) for name, value in after._asdict().items()))
+        after = _narrow(after._replace(**cleared, ply=s.ply + 1))
         return after, rolled._replace(used=jnp.where(s.round == 0, 0, rolled.used))
+
+    def _spotted(self, s: State, after: State, walk: _Walk) -> State:
+        """Return the state after a step under fog, each side's memory brought up to date.
+
+        From the step that starts the battle, where the fog falls, and every step of it.
+        """
+        alive = after.cell >= 0
+        falls = (s.round == 0) & (after.round == 1) & (s.belief < 0)  # each side saw it all
+        fallen = after._replace(
+            spotted=jnp.where(alive, after.cell, -1),
+            spotted_hp=after.hp,
+            spotted_facing=after.facing,
+            spotted_round=jnp.where(alive, 1, after.spotted_round),
+        )
+        before = _select(falls, fallen, after)
+        mover = jnp.where(falls, -1, s.team[self._acting(s)])
+        spotted = self._spot(before, jnp.where(falls, 1, s.round), mover, walk)
+        return _select(falls | self._hidden(s), spotted, after)
+
+    def _spot(self, s: State, round_: jax.Array, mover: jax.Array, walk: _Walk) -> State:
+        """Bring each side's memory of the other's units up to date, as `Tactics._spot`.
+
+        A unit on a tile the other side sees is spotted where it stands. One that isn't keeps
+        the tile it was last seen on until the other side sees that tile without it: then it is
+        believed on the nearest tile that side doesn't see (by hops, then cell id), walls,
+        rubble and the tiles of other ghosts aside, in order of the units' cells. The team
+        ``mover`` (-1 for none) also sees what its unit saw along ``walk``, and that unit is
+        last seen on the last tile of its walk the other side sees.
+        """
+        far, n, none = cast("Patch", self.far), self.n_cells, self.n_units
+        alive = s.cell >= 0
+        open_ = ~(s.wall | s.rubble)
+        sees = [
+            batched.sight(
+                far, s.wall, jnp.where(alive & (s.team == t), s.cell, -1), self._sight[s.kind]
+            )
+            for t in (0, 1)
+        ]
+        u = walk.unit
+        walks = (mover >= 0) & (walk.length >= 1) & (s.cell[u] >= 0)  # it lived through it
+        along = jnp.arange(walk.tiles.shape[0])
+        on_way = jnp.where(walks & (along < walk.length), walk.tiles, -1)
+        saw = batched.sight(far, s.wall, on_way, self._sight[s.kind[u]])
+        theirs = jnp.where(mover == 0, sees[1], sees[0])
+        glimpsed = walks & (along <= walk.length) & jnp.append(theirs, False)[walk.tiles]
+        last = walk.tiles[jnp.argmax(jnp.where(glimpsed, along, -1))]
+        mark = jnp.where(glimpsed.any(), u, none)
+        s = s._replace(
+            spotted=s.spotted.at[mark].set(last, mode="drop"),
+            spotted_hp=s.spotted_hp.at[mark].set(s.hp[u], mode="drop"),
+            spotted_facing=s.spotted_facing.at[mark].set(s.facing[u], mode="drop"),
+            spotted_round=s.spotted_round.at[mark].set(round_, mode="drop"),
+        )
+        sees = [sees[t] | (saw & (mover == t)) for t in (0, 1)]
+        spotted = s.spotted
+        for side in (0, 1):
+            other = sees[1 - side]
+            mine = alive & (s.team == side)
+            seen = mine & jnp.append(other, False)[jnp.where(alive, s.cell, n)]
+            spotted = jnp.where(seen, s.cell, spotted)
+            s = s._replace(
+                spotted_hp=jnp.where(seen, s.hp, s.spotted_hp),
+                spotted_facing=jnp.where(seen, s.facing, s.spotted_facing),
+                spotted_round=jnp.where(seen, round_, s.spotted_round),
+            )
+            lost = mine & ~seen
+            ghost = jnp.clip(spotted, 0, n - 1)
+            gone = lost & other[ghost]
+            free = open_ & ~other
+            free = free.at[jnp.where(lost & ~gone, ghost, n)].set(False, mode="drop")
+            in_order = jnp.argsort(jnp.where(gone, s.cell, FAR))
+            for nth in range(self.game.team_size):
+                unit = in_order[nth]
+                moves = gone[unit]
+                there = jnp.argmin(jnp.where(free, self._hops[ghost[unit]], FAR))
+                spotted = spotted.at[jnp.where(moves, unit, none)].set(there, mode="drop")
+                free = free.at[jnp.where(moves, there, n)].set(False, mode="drop")
+        return s._replace(spotted=spotted)
 
     def _deploy(self, s: State, action: jax.Array, dice: Dice) -> State:
         """Place a unit for the team deploying, and start the battle after the last one."""
@@ -857,10 +1028,10 @@ class TacticsArrays:
             round=jnp.where(starts, 1, 0),
         )
 
-    def _battle(self, s: State, action: jax.Array, dice: Dice) -> tuple[State, _Rolled]:
+    def _battle(self, s: State, action: jax.Array, dice: Dice) -> tuple[State, _Rolled, _Walk]:
         """Carry out the acting unit's action and finish the step, as `Tactics.step` in battle.
 
-        Returns the state and the rolls the step made.
+        Returns the state, the rolls the step made and the acting unit's walk.
         """
         game, near, none = self.game, self.near, self.n_units
         u = self._acting(s)
@@ -884,7 +1055,7 @@ class TacticsArrays:
         was_wall, was_rubble = s.wall[tile], s.rubble[tile]
         s = s._replace(
             attacked=s.attacked.at[u].set(s.attacked[u] | spent),
-            faced=s.faced.at[u].set(jnp.where(spent | moves | swaps, False, s.faced[u] | turns)),
+            faced=s.faced.at[u].set(jnp.where(spent | swaps, False, s.faced[u] | turns)),
             facing=s.facing.at[u].set(jnp.where(turns, action - self.face0, facing)),
             done=s.done.at[u].set(s.done[u] | ends),
             watch=s.watch.at[u].set(jnp.where(defers, tile, s.watch[u])),
@@ -892,14 +1063,22 @@ class TacticsArrays:
             rubble=s.rubble.at[works].set(jnp.where(builds, ~was_rubble, was_wall), mode="drop"),
         )
 
-        # A move's route, around the tiles enemies watch where another way is as short.
-        alive = s.cell >= 0
-        blocked = s.wall | s.rubble | (holds[:-1] >= 0)
-        watching = alive & (s.team != s.team[u]) & (s.watch >= 0)
-        watched = jnp.where(watching, s.watch, self.n_cells)
+        # A move's route, around the tiles enemies watch where another way is as short: as
+        # the mover believes the board to be, and it stops before a unit it didn't know of.
+        plan = self._as_mover_believes(s)
+        alive = plan.cell >= 0
+        blocked = s.wall | s.rubble | (self._unit_at(plan)[:-1] >= 0)
+        watching = alive & (plan.team != s.team[u]) & (plan.watch >= 0)
+        watched = jnp.where(watching, plan.watch, self.n_cells)
         cost = jnp.full(self.n_cells + 1, _STEP, jnp.int32).at[watched].set(_STEP + 1)[:-1]
         goal = jnp.where(moves, target, 0)
         route, length = batched.path_around(near, start, goal, blocked, self._steps, cost)
+        if self.hidden:
+            ahead = jnp.arange(1, self._steps + 1)
+            met = (holds[cells[route[1:]]] >= 0) & (ahead <= length) & self._hidden(s)
+            length = jnp.where(met.any(), jnp.argmax(met), length).astype(jnp.int32)
+        walks_on = moves & (length > 0)
+        s = s._replace(faced=s.faced.at[u].set(s.faced[u] & ~walks_on))
 
         # A swap: both units change places before any archer fires.
         partner = jnp.where(swaps, holds[tile], u)
@@ -930,13 +1109,15 @@ class TacticsArrays:
             enters = walks | (swaps & (entry < 2))
             who = jnp.where(swaps & (entry == 1), partner, u)
             s, rolled = self._spring(s, who, enters, rolled)
-        if game.turn_on_move:  # a walk ends facing the way it went, start to goal
-            walked = jnp.where(moves & (s.cell[u] >= 0), u, none)
-            s = s._replace(facing=s.facing.at[walked].set(near.turned[goal, facing], mode="drop"))
+        end = route[jnp.clip(length, 0, self._steps)]
+        if game.turn_on_move:  # a walk ends facing the way it went, from start to end
+            walked = jnp.where(walks_on & (s.cell[u] >= 0), u, none)
+            s = s._replace(facing=s.facing.at[walked].set(near.turned[end, facing], mode="drop"))
 
         other = jnp.where(attacks, holds[tile], u)
         s, rolled = self._attack(s, u, other, attacks, rolled, deferred=False)
-        return self._next(s, u, dice), rolled
+        walk = _Walk(u, cells[route], jnp.where(moves, length, 0))
+        return self._next(s, u, dice), rolled, walk
 
     def _spring(
         self, s: State, who: jax.Array, on: jax.Array, rolled: _Rolled
@@ -1226,6 +1407,16 @@ def _wide(state: State) -> State:
     """Return a state with its counts as int32, for the rules to count with."""
     wide = {name: jnp.asarray(getattr(state, name)).astype(jnp.int32) for name in _COUNTED}
     return state._replace(**wide)
+
+
+def _narrow(s: State) -> State:
+    """Return a state with every field in the dtype `State` keeps it in: `_wide` undone."""
+    return State(*(jnp.asarray(value).astype(_DTYPES[name]) for name, value in s._asdict().items()))
+
+
+def _select(which: jax.Array, a: State, b: State) -> State:
+    """Return state ``a`` where ``which``, else ``b``: each field chosen whole."""
+    return jax.tree.map(lambda x, y: jnp.where(which, x, y), a, b)
 
 
 def _check_moves(near: Patch, steps: int, targets: int) -> None:

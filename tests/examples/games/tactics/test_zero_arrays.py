@@ -21,8 +21,8 @@ OPEN = dataclasses.replace(small_rules(), fog=False)
 
 @functools.cache
 def arrays_of(fog: bool) -> TacticsArrays:
-    """The array rules of the small game, with or without fog."""
-    return TacticsArrays(small_rules() if fog else OPEN)
+    """The array rules of the small game, with or without fog, for searches of beliefs."""
+    return TacticsArrays(small_rules() if fog else OPEN, hidden=False)
 
 
 @functools.cache
